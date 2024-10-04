@@ -1,6 +1,7 @@
 #include <fmt/format.h>
 #include <bitset>
 #include <functional>
+#include <iostream>
 #include <numeric>
 #include <optional>
 #include <random>
