@@ -2,6 +2,7 @@
 #include <zipfian_int_distribution.h>
 #include <bitset>
 #include <functional>
+#include <iostream>
 #include <numeric>
 #include <optional>
 #include <random>
