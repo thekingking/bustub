@@ -31,12 +31,11 @@ void TrieStore::Put(std::string_view key, T value) {
   // 插入节点，生成新树
   write_lock_.lock();
   Trie new_root = root_.Put(key, std::move(value));
-  write_lock_.unlock();
-
   // 更新根节点
   root_lock_.lock();
   root_ = new_root;
   root_lock_.unlock();
+  write_lock_.unlock();
 }
 
 void TrieStore::Remove(std::string_view key) {
@@ -47,12 +46,11 @@ void TrieStore::Remove(std::string_view key) {
   // 删除节点，生成新树
   write_lock_.lock();
   Trie new_root = root_.Remove(key);
-  write_lock_.unlock();
-
   // 更新根节点
   root_lock_.lock();
   root_ = new_root;
   root_lock_.unlock();
+  write_lock_.unlock();
 }
 
 // Below are explicit instantiation of template functions.
