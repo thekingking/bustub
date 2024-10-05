@@ -37,7 +37,7 @@ auto Trie::Get(std::string_view key) const -> const T * {
 }
 
 template <class T>
-void PutRec(std::shared_ptr<TrieNode> &new_root,std::string_view key, T val) {
+void PutRec(std::shared_ptr<TrieNode> &new_root, std::string_view key, T val) {
   auto ch = key[0];
   // 如果key.size() == 1,则当前节点下一个节点为插入节点，在此进行插入操作
   if (key.size() == 1) {
@@ -45,11 +45,11 @@ void PutRec(std::shared_ptr<TrieNode> &new_root,std::string_view key, T val) {
     // 如果子节点存在，则覆盖，否则创建新的子节点
     if (new_root->children_.find(ch) != new_root->children_.end()) {
       auto node = new_root->children_[ch];
-      new_root->children_[ch] = std::make_shared<const TrieNodeWithValue<T>>(node->children_ ,std::move(val_p));
+      new_root->children_[ch] = std::make_shared<const TrieNodeWithValue<T>>(node->children_, std::move(val_p));
     } else {
       new_root->children_[ch] = std::make_shared<const TrieNodeWithValue<T>>(std::move(val_p));
     }
-    return ;
+    return;
   }
   // 如果key.size() > 1,则当前节点下一个节点不为插入节点，在此进行递归操作
   std::shared_ptr<TrieNode> node = nullptr;
@@ -95,42 +95,6 @@ auto Trie::Put(std::string_view key, T value) const -> Trie {
   // exists, you should create a new `TrieNodeWithValue`.
 }
 
-bool RemoveCycle(const std::shared_ptr<TrieNode> &new_root, std::string_view key) {
-  for (auto &pair : new_root->children_) {
-    if (key.at(0) != pair.first) {
-      continue;
-    }
-    if (key.size() == 1) {
-      if (!pair.second->is_value_node_) {
-        return false;
-      }
-      if (pair.second->children_.empty()) {
-        // 子节点为空，直接删除
-        new_root->children_.erase(pair.first);
-      } else {
-        // 子节点不为空，则创建空节点，并将原本节点的子节点转移到新节点上
-        pair.second = std::make_shared<const TrieNode>(pair.second->children_);
-      }
-      return true;
-    }
-    std::shared_ptr<TrieNode> ptr = pair.second->Clone();
-    bool flag = RemoveCycle(ptr, key.substr(1));
-    // 没有删除节点，则直接退出
-    if (!flag) {
-      return false;
-    }
-    // 如果有删除的节点，且删除后子节点无value且为空，则删除当前节点
-    if (ptr->children_.empty() && !ptr->is_value_node_) {
-      new_root->children_.erase(pair.first);
-    } else {
-      // 否则用删除的子树覆盖原来的子树
-      pair.second = std::shared_ptr<const TrieNode>(ptr);
-    }
-    return true;
-  }
-  return false;
-}
-
 void RemoveRec(const std::shared_ptr<TrieNode> &new_root, std::string_view key) {
   auto ch = key.at(0);
   // key.size() == 1，删除节点在当前节点上
@@ -144,11 +108,11 @@ void RemoveRec(const std::shared_ptr<TrieNode> &new_root, std::string_view key) 
         new_root->children_[ch] = std::make_shared<const TrieNode>(node->children_);
       }
     }
-    return ;
+    return;
   }
   // 没查找到节点，直接返回
   if (new_root->children_.find(ch) == new_root->children_.end()) {
-    return ;
+    return;
   }
   // 查找到节点，递归删除
   std::shared_ptr<TrieNode> node = new_root->children_.at(ch)->Clone();
