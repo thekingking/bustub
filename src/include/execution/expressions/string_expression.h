@@ -52,11 +52,13 @@ class StringExpression : public AbstractExpression {
         for (char c : val) {
           result.push_back(std::toupper(c));
         }
+        break;
       }
       case StringExpressionType::Lower: {
         for (char c : val) {
           result.push_back(std::tolower(c));
         }
+        break;
       }
     }
     return result;

@@ -28,12 +28,14 @@ void TrieStore::Put(std::string_view key, T value) {
   // You will need to ensure there is only one writer at a time. Think of how you can achieve this.
   // The logic should be somehow similar to `TrieStore::Get`.
   // throw NotImplementedException("TrieStore::Put is not implemented.");
-  root_lock_.lock();
+  // 插入节点，生成新树
   write_lock_.lock();
-  Trie root = root_;
-  Trie new_root = root.Put(key, std::move(value));
-  root_ = new_root;
+  Trie new_root = root_.Put(key, std::move(value));
   write_lock_.unlock();
+
+  // 更新根节点
+  root_lock_.lock();
+  root_ = new_root;
   root_lock_.unlock();
 }
 
@@ -42,12 +44,14 @@ void TrieStore::Remove(std::string_view key) {
   // The logic should be somehow similar to `TrieStore::Get`.
   // throw NotImplementedException("TrieStore::Remove is not implemented.");
 
-  root_lock_.lock();
+  // 删除节点，生成新树
   write_lock_.lock();
-  Trie root = root_;
-  Trie new_root = root.Remove(key);
-  root_ = new_root;
+  Trie new_root = root_.Remove(key);
   write_lock_.unlock();
+
+  // 更新根节点
+  root_lock_.lock();
+  root_ = new_root;
   root_lock_.unlock();
 }
 
