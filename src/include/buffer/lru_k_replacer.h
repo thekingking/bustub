@@ -34,9 +34,9 @@ class LRUKNode {
   std::list<size_t> history_;  // 访问历史
   size_t k_;                   // k值
   frame_id_t fid_;             // 帧id
-  bool is_evictable_{false};   // 是否可被替换
+  bool is_evictable_{true};    // 是否可被替换
 
-public:
+ public:
   LRUKNode() = default;
   LRUKNode(frame_id_t fid, size_t k) : k_(k), fid_(fid) {}
 };
@@ -155,15 +155,15 @@ class LRUKReplacer {
  private:
   // TODO(student): implement me! You can replace these member variables as you like.
   // Remove maybe_unused if you start using them.
-  std::unordered_map<frame_id_t, std::shared_ptr<LRUKNode>> node_store_; // store all nodes
-  size_t current_timestamp_{0};                          // 当前时间戳
-  size_t curr_size_{0};                                  // 当前可驱逐帧数量
-  size_t max_size_;                                      // 最大可驱逐帧数量
-  size_t replacer_size_;                                 // 主存容量
-  size_t k_;                                             // k值
-  std::mutex latch_;                                     // 互斥锁
-  std::list<frame_id_t> history_list;                    // 历史队列
-  std::list<frame_id_t> lru_list;                        // k队列
+  std::unordered_map<frame_id_t, std::shared_ptr<LRUKNode>> node_store_;  // store all nodes
+  size_t current_timestamp_{0};                                           // 当前时间戳
+  size_t curr_size_{0};                                                   // 当前可驱逐帧数量
+  size_t max_size_{0};                                                    // 当前帧数量
+  size_t replacer_size_;                                                  // 帧容量
+  size_t k_;                                                              // k值
+  std::mutex latch_;                                                      // 互斥锁
+  std::list<frame_id_t> history_list_;                                    // 历史队列
+  std::list<frame_id_t> lru_list_;                                        // k队列
 };
 
 }  // namespace bustub

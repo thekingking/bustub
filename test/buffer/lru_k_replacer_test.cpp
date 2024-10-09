@@ -12,6 +12,7 @@
 #include <thread>  // NOLINT
 #include <vector>
 
+#include "common/config.h"
 #include "gtest/gtest.h"
 
 namespace bustub {
