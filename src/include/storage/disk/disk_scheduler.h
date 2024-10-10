@@ -83,6 +83,13 @@ class DiskScheduler {
    */
   auto CreatePromise() -> DiskSchedulerPromise { return {}; };
 
+  /**
+   * @brief 处理单个磁盘请求
+   *
+   * @param request 磁盘请求
+   */
+  void ProcessDiskRequest(DiskRequest request);
+
  private:
   /** Pointer to the disk manager. */
   DiskManager *disk_manager_ __attribute__((__unused__));
