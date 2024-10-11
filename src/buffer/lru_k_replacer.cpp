@@ -36,6 +36,7 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
       --curr_size_;
       --max_size_;
       node_store_[*frame_id]->history_.clear();
+      node_store_[*frame_id]->is_evictable_ = false;
       return true;
     }
   }
@@ -52,6 +53,7 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
   --max_size_;
   lru_list_.remove(*frame_id);
   node_store_[*frame_id]->history_.clear();
+  node_store_[*frame_id]->is_evictable_ = false;
   return true;
 }
 
@@ -85,7 +87,6 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
     if (max_size_ == replacer_size_) {
       return;
     }
-    ++curr_size_;
     ++max_size_;
     history_list_.push_back(frame_id);
     // 向node_store中添加节点
@@ -171,6 +172,7 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
     }
   }
   node_store_[frame_id]->history_.clear();
+  node_store_[frame_id]->is_evictable_ = false;
   --curr_size_;
   --max_size_;
 }

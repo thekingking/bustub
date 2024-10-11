@@ -34,7 +34,7 @@ class LRUKNode {
   std::list<size_t> history_;  // 访问历史
   size_t k_;                   // k值
   frame_id_t fid_;             // 帧id
-  bool is_evictable_{true};    // 是否可被替换
+  bool is_evictable_{false};   // 是否可被替换
 
  public:
   LRUKNode() = default;
