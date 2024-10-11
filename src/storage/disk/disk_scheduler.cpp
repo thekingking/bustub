@@ -19,11 +19,6 @@
 namespace bustub {
 
 DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_manager) {
-  // // TODO(P1): remove this line after you have implemented the disk scheduler API
-  // throw NotImplementedException(
-  //     "DiskScheduler is not implemented yet. If you have finished implementing the disk scheduler, please remove the
-  //     " "throw exception line in `disk_scheduler.cpp`.");
-
   // Spawn the background thread
   background_thread_.emplace([&] { StartWorkerThread(); });
 }
@@ -38,29 +33,22 @@ DiskScheduler::~DiskScheduler() {
 
 void DiskScheduler::Schedule(DiskRequest r) {
   // 将disk_request放入channel队列中
-  request_queue_.Put(std::move(r));
+  request_queue_.Put(std::make_optional<DiskRequest>(std::move(r)));
 }
 
 void DiskScheduler::StartWorkerThread() {
-  std::optional<DiskRequest> r;
+  std::optional<DiskRequest> request;
   // 从channel队列中取出disk_request并执行
-  while ((r = request_queue_.Get()) != std::nullopt) {
-    // 创建线程执行disk_request
-    std::thread t(&DiskScheduler::ProcessDiskRequest, this, std::move(r.value()));
-    t.join();
+  while ((request = request_queue_.Get()) != std::nullopt) {
+    // 执行读写操作
+    if (request->is_write_) {
+      disk_manager_->WritePage(request->page_id_, request->data_);
+    } else {
+      disk_manager_->ReadPage(request->page_id_, request->data_);
+    }
+    // Signal the issuer that the request has been completed
+    request->callback_.set_value(true);
   }
-}
-
-void DiskScheduler::ProcessDiskRequest(DiskRequest request) {
-  // 执行读写操作
-  if (request.is_write_) {
-    disk_manager_->WritePage(request.page_id_, request.data_);
-  } else {
-    disk_manager_->ReadPage(request.page_id_, request.data_);
-  }
-
-  // Signal the issuer that the request has been completed
-  request.callback_.set_value(true);
 }
 
 }  // namespace bustub

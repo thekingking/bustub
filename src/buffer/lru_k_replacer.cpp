@@ -30,13 +30,13 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
 
   // 优先从history队列evict frame
   for (auto it = history_list_.begin(); it != history_list_.end(); it++) {
-    if (node_store_[*it]->is_evictable_) {
+    if (node_store_[*it].is_evictable_) {
       *frame_id = *it;
       history_list_.erase(it);
       --curr_size_;
       --max_size_;
-      node_store_[*frame_id]->history_.clear();
-      node_store_[*frame_id]->is_evictable_ = false;
+      node_store_[*frame_id].history_.clear();
+      node_store_[*frame_id].is_evictable_ = false;
       return true;
     }
   }
@@ -44,16 +44,16 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
   // lru队列evict frame
   auto min_time = current_timestamp_;
   for (auto it : lru_list_) {
-    if (node_store_[it]->is_evictable_ && node_store_[it]->history_.front() < min_time) {
-      min_time = node_store_[it]->history_.front();
+    if (node_store_[it].is_evictable_ && node_store_[it].history_.front() < min_time) {
+      min_time = node_store_[it].history_.front();
       *frame_id = it;
     }
   }
   --curr_size_;
   --max_size_;
   lru_list_.remove(*frame_id);
-  node_store_[*frame_id]->history_.clear();
-  node_store_[*frame_id]->is_evictable_ = false;
+  node_store_[*frame_id].history_.clear();
+  node_store_[*frame_id].is_evictable_ = false;
   return true;
 }
 
@@ -68,33 +68,27 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
   // }
   // 获取frame_id指定的节点
   auto it = node_store_.find(frame_id);
-  std::shared_ptr<LRUKNode> node = nullptr;
   // 如果节点不存在，创建新节点
   if (it == node_store_.end()) {
-    node = std::make_shared<LRUKNode>(frame_id, k_);
-    node_store_[frame_id] = node;
-  } else {
-    node = it->second;
+    node_store_[frame_id] = LRUKNode(frame_id, k_);
   }
 
   // 添加历史记录
-  node->history_.push_back(current_timestamp_);
+  node_store_[frame_id].history_.push_back(current_timestamp_);
   // 更新时间戳
   ++current_timestamp_;
 
   // 新加入记录
-  if (node->history_.size() == 1) {
+  if (node_store_[frame_id].history_.size() == 1) {
     if (max_size_ == replacer_size_) {
       return;
     }
     ++max_size_;
     history_list_.push_back(frame_id);
-    // 向node_store中添加节点
-    node_store_[frame_id] = node;
   }
 
   // 记录达到k次，加入lru队列
-  if (node->history_.size() == k_) {
+  if (node_store_[frame_id].history_.size() == k_) {
     for (auto it = history_list_.begin(); it != history_list_.end(); it++) {
       if (*it == frame_id) {
         history_list_.erase(it);
@@ -105,8 +99,8 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
   }
 
   // 本来就在lru队列中，更新时间戳
-  if (node->history_.size() > k_) {
-    node->history_.pop_front();
+  if (node_store_[frame_id].history_.size() > k_) {
+    node_store_[frame_id].history_.pop_front();
   }
 }
 
@@ -126,14 +120,14 @@ void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
   }
   auto node = it->second;
 
-  if (!node->is_evictable_ && set_evictable) {
+  if (!node_store_[frame_id].is_evictable_ && set_evictable) {
     // 原先不可驱逐，现在可驱逐
     ++curr_size_;
-  } else if (node->is_evictable_ && !set_evictable) {
+  } else if (node_store_[frame_id].is_evictable_ && !set_evictable) {
     // 原先可驱逐，现在不可驱逐
     --curr_size_;
   }
-  node->is_evictable_ = set_evictable;
+  node_store_[frame_id].is_evictable_ = set_evictable;
 }
 
 void LRUKReplacer::Remove(frame_id_t frame_id) {
@@ -148,7 +142,7 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
     return;
   }
   // 判断frame_id是否可驱逐
-  if (!node_store_[frame_id]->is_evictable_) {
+  if (!node_store_[frame_id].is_evictable_) {
     // throw Exception("frame_id is not evictable");
     return;
   }
@@ -156,7 +150,7 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
     return;
   }
   // 删除节点
-  if (node_store_[frame_id]->history_.size() == k_) {
+  if (node_store_[frame_id].history_.size() == k_) {
     for (auto it = lru_list_.begin(); it != lru_list_.end(); it++) {
       if (*it == frame_id) {
         lru_list_.erase(it);
@@ -171,8 +165,8 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
       }
     }
   }
-  node_store_[frame_id]->history_.clear();
-  node_store_[frame_id]->is_evictable_ = false;
+  node_store_[frame_id].history_.clear();
+  node_store_[frame_id].is_evictable_ = false;
   --curr_size_;
   --max_size_;
 }
