@@ -92,6 +92,8 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     frame_id_t frame_id = page_table_[page_id];
     // 更新访问历史
     replacer_->RecordAccess(frame_id, access_type);
+    // 设置frame不可驱逐
+    replacer_->SetEvictable(frame_id, false);
     // 更新pin_count
     pages_[frame_id].WLatch();
     ++pages_[frame_id].pin_count_;
