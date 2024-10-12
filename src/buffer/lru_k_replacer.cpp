@@ -34,7 +34,6 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
       *frame_id = *it;
       history_list_.erase(it);
       --curr_size_;
-      --max_size_;
       node_store_[*frame_id].history_.clear();
       node_store_[*frame_id].is_evictable_ = false;
       return true;
@@ -50,7 +49,6 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
     }
   }
   --curr_size_;
-  --max_size_;
   lru_list_.remove(*frame_id);
   node_store_[*frame_id].history_.clear();
   node_store_[*frame_id].is_evictable_ = false;
@@ -60,12 +58,10 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
 void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType access_type) {
   // 加锁
   std::lock_guard<std::mutex> lock(latch_);
-
-  // // 判断frame_id是否合法
-  // if (frame_id < 1 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
-  // throw Exception("frame_id is invalid");
-  // return;
-  // }
+  // 判断frame_id是否合法
+  if (frame_id < 0 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
+    return;
+  }
   // 获取frame_id指定的节点
   auto it = node_store_.find(frame_id);
   // 如果节点不存在，创建新节点
@@ -80,10 +76,6 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
 
   // 新加入记录
   if (node_store_[frame_id].history_.size() == 1) {
-    if (max_size_ == replacer_size_) {
-      return;
-    }
-    ++max_size_;
     history_list_.push_back(frame_id);
   }
 
@@ -108,10 +100,9 @@ void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
   // 加锁
   std::lock_guard<std::mutex> lock(latch_);
   // 判断frame_id是否合法
-  // if (frame_id < 1 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
-  // throw Exception("LRUKReplacer::RecordAccess: frame_id is invalid");
-  // return;
-  // }
+  if (frame_id < 0 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
+    return;
+  }
 
   // 获取frame_id指定的节点
   auto it = node_store_.find(frame_id);
@@ -134,19 +125,14 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
   // 加锁
   std::lock_guard<std::mutex> lock(latch_);
   // 判断frame_id是否合法
-  // if (frame_id < 1 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
-  //   // throw Exception("frame_id is invalid");
-  //   return;
-  // }
+  if (frame_id < 0 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
+    return;
+  }
   if (node_store_.find(frame_id) == node_store_.end()) {
     return;
   }
   // 判断frame_id是否可驱逐
   if (!node_store_[frame_id].is_evictable_) {
-    // throw Exception("frame_id is not evictable");
-    return;
-  }
-  if (curr_size_ == 0) {
     return;
   }
   // 删除节点
@@ -168,7 +154,6 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
   node_store_[frame_id].history_.clear();
   node_store_[frame_id].is_evictable_ = false;
   --curr_size_;
-  --max_size_;
 }
 
 auto LRUKReplacer::Size() -> size_t { return curr_size_; }

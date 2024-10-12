@@ -158,7 +158,6 @@ class LRUKReplacer {
   std::unordered_map<frame_id_t, LRUKNode> node_store_;  // store all nodes
   size_t current_timestamp_{0};                          // 当前时间戳
   size_t curr_size_{0};                                  // 当前可驱逐帧数量
-  size_t max_size_{0};                                   // 当前帧数量
   size_t replacer_size_;                                 // 帧容量
   size_t k_;                                             // k值
   std::mutex latch_;                                     // 互斥锁

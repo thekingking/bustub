@@ -120,6 +120,10 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
   flag = pages_[frame_id].GetPinCount() <= 0;
   pages_[frame_id].RUnlatch();
 
+  pages_[page_table_[page_id]].WLatch();
+  pages_[page_table_[page_id]].is_dirty_ = pages_[page_table_[page_id]].is_dirty_ || is_dirty;
+  pages_[page_table_[page_id]].WUnlatch();
+
   // 如果pin_count <= 0，返回false
   if (flag) {
     return false;
@@ -128,9 +132,6 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
   // 如果pin_count > 0，更新pin_count
   pages_[frame_id].WLatch();
   --pages_[frame_id].pin_count_;
-  if (is_dirty) {
-    pages_[frame_id].is_dirty_ = true;
-  }
   pages_[frame_id].WUnlatch();
 
   // 如果pin_count == 0, 将replace_中对应的frame设置为evictable
