@@ -137,11 +137,8 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
 auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unused]] AccessType access_type) -> bool {
   // 加锁
   std::scoped_lock lock(latch_);
-  if (page_id == INVALID_PAGE_ID) {
-    return false;
-  }
-  // 如果page不在buffer pool中，返回false
-  if (page_table_.find(page_id) == page_table_.end()) {
+  // 如果page_id无效，或者page不在buffer pool中，返回false
+  if (page_id == INVALID_PAGE_ID || page_table_.find(page_id) == page_table_.end()) {
     return false;
   }
   // 获取frame_id
@@ -166,12 +163,7 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
 auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
   // 加锁
   std::scoped_lock lock(latch_);
-  // 如果page_id无效，返回false
-  if (page_id == INVALID_PAGE_ID) {
-    return false;
-  }
-  // 如果page不在buffer pool中，返回false
-  if (page_table_.find(page_id) == page_table_.end()) {
+  if (page_id == INVALID_PAGE_ID || page_table_.find(page_id) == page_table_.end()) {
     return false;
   }
 
@@ -211,18 +203,17 @@ void BufferPoolManager::FlushAllPages() {
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   // 加锁
   std::scoped_lock lock(latch_);
-  if (page_id == INVALID_PAGE_ID) {
-    return true;
-  }
-  // 如果page_id不在buffer pool中，返回true
-  if (page_table_.find(page_id) == page_table_.end()) {
+  // 如果page_id无效，或者page不在buffer pool中，返回true
+  if (page_id == INVALID_PAGE_ID || page_table_.find(page_id) == page_table_.end()) {
     return true;
   }
   // 获取frame_id
   frame_id_t frame_id = page_table_[page_id];
+  // 如果page是pinned，返回false
   if (pages_[frame_id].GetPinCount() > 0) {
     return false;
   }
+
   // 如果page是脏页，将page写回disk
   if (pages_[frame_id].IsDirty()) {
     auto promise = disk_scheduler_->CreatePromise();

@@ -172,14 +172,6 @@ class BufferPoolManager {
    */
   auto DeletePage(page_id_t page_id) -> bool;
 
-  /**
-   * @brief Create a new page on disk. Caller should acquire the latch before calling this function.
-   *
-   * @param page_id the id of the new page
-   * @return the id of the allocated page
-   */
-  auto CreateNewPage(page_id_t page_id, [[maybe_unused]] AccessType access_type = AccessType::Unknown) -> Page *;
-
  private:
   /** Number of pages in the buffer pool. */
   const size_t pool_size_;
