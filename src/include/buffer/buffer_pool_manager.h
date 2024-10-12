@@ -178,7 +178,7 @@ class BufferPoolManager {
    * @param page_id the id of the new page
    * @return the id of the allocated page
    */
-  void CreateNewPage(page_id_t page_id, [[maybe_unused]] AccessType access_type = AccessType::Unknown);
+  auto CreateNewPage(page_id_t page_id, [[maybe_unused]] AccessType access_type = AccessType::Unknown) -> Page *;
 
  private:
   /** Number of pages in the buffer pool. */
