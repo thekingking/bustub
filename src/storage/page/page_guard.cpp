@@ -1,30 +1,108 @@
 #include "storage/page/page_guard.h"
+#include <iostream>
 #include "buffer/buffer_pool_manager.h"
 
 namespace bustub {
 
-BasicPageGuard::BasicPageGuard(BasicPageGuard &&that) noexcept {}
+BasicPageGuard::BasicPageGuard(BasicPageGuard &&that) noexcept {
+  // std::cout << "移动构造, page_id: " << page_->GetPageId() << ", pin_count:" << page_->GetPinCount() << std::endl;
+  // 将源对象的资源指针设置为无效状态，避免资源被释放
+  bpm_ = that.bpm_;
+  page_ = that.page_;
+  that.page_ = nullptr;
+  that.bpm_ = nullptr;
+  this->is_dirty_ = that.is_dirty_;
+}
 
-void BasicPageGuard::Drop() {}
+// 释放页面守卫应清除所有内容
+void BasicPageGuard::Drop() {
+  if (bpm_ != nullptr && page_ != nullptr) {
+    bpm_->UnpinPage(page_->GetPageId(), is_dirty_);
+  }
+  bpm_ = nullptr;
+  page_ = nullptr;
+}
 
-auto BasicPageGuard::operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard & { return *this; }
+// 移动赋值函数
+auto BasicPageGuard::operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard & {
+  // 防止自我赋值
+  if (this == &that) {
+    return *this;
+  }
+  // 释放this当前持有的资源
+  Drop();
+  bpm_ = that.bpm_;
+  page_ = that.page_;
+  that.page_ = nullptr;
+  that.bpm_ = nullptr;
+  this->is_dirty_ = that.is_dirty_;
+  return *this;
+}
 
-BasicPageGuard::~BasicPageGuard(){};  // NOLINT
+BasicPageGuard::~BasicPageGuard() { Drop(); }  // NOLINT
 
-ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept = default;
+auto BasicPageGuard::UpgradeRead() -> ReadPageGuard {
+  if (page_ != nullptr) {
+    page_->RLatch();
+  }
+  auto read_page_guard = ReadPageGuard(bpm_, page_);
+  bpm_ = nullptr;
+  page_ = nullptr;
+  return read_page_guard;
+}
 
-auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & { return *this; }
+auto BasicPageGuard::UpgradeWrite() -> WritePageGuard {
+  if (page_ != nullptr) {
+    page_->WLatch();
+  }
+  auto write_page_guard = WritePageGuard(bpm_, page_);
+  bpm_ = nullptr;
+  page_ = nullptr;
+  return write_page_guard;
+};  // NOLINT
 
-void ReadPageGuard::Drop() {}
+// ReadPageGuard 的移动构造函数 和BasicPageGuard很像
+ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept { guard_ = std::move(that.guard_); }
 
-ReadPageGuard::~ReadPageGuard() {}  // NOLINT
+auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
+  // 防止自我赋值
+  if (this == &that) {
+    return *this;
+  }
+  Drop();
+  guard_ = std::move(that.guard_);
+  return *this;
+}
 
-WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept = default;
+void ReadPageGuard::Drop() {
+  if (guard_.page_ != nullptr) {
+    guard_.page_->RUnlatch();
+  }
+  guard_.Drop();
+}
 
-auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & { return *this; }
+ReadPageGuard::~ReadPageGuard() { Drop(); }  // NOLINT
 
-void WritePageGuard::Drop() {}
+WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept { guard_ = std::move(that.guard_); }
 
-WritePageGuard::~WritePageGuard() {}  // NOLINT
+auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
+  // 防止自我赋值
+  if (this == &that) {
+    return *this;
+  }
+  Drop();
+  guard_ = std::move(that.guard_);
+  return *this;
+}
+
+void WritePageGuard::Drop() {
+  if (guard_.page_ != nullptr) {
+    guard_.page_->WUnlatch();
+  }
+  guard_.is_dirty_ = true;
+  guard_.Drop();
+}
+
+WritePageGuard::~WritePageGuard() { Drop(); }  // NOLINT
 
 }  // namespace bustub

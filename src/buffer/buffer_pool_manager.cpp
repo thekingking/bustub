@@ -39,6 +39,7 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
   std::scoped_lock<std::mutex> lock(latch_);
   // 为新的page分配page_id
   *page_id = AllocatePage();
+  // std::cout << "NewPage: page_id: " << *page_id << std::endl;
   frame_id_t frame_id = -1;
   // 如果free_list为空，则从replacer中evict一个frame
   if (free_list_.empty()) {
@@ -72,12 +73,14 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
   replacer_->RecordAccess(frame_id);
   // 设置frame不可驱逐
   replacer_->SetEvictable(frame_id, false);
+  // std::cout << ", page_count: " << pages_[page_table_[*page_id]].GetPinCount() << std::endl;
   return &pages_[frame_id];
 }
 
 auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType access_type) -> Page * {
   // 加锁
   std::lock_guard lock(latch_);
+  // std::cout << "FetchPage: page_id: " << page_id;
   if (page_id == INVALID_PAGE_ID) {
     return nullptr;
   }
@@ -91,6 +94,7 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     replacer_->SetEvictable(frame_id, false);
     // 更新pin_count
     ++pages_[frame_id].pin_count_;
+    // std::cout << ", page_count: " << pages_[page_table_[page_id]].GetPinCount() << std::endl;
     return &pages_[frame_id];
   }
   frame_id_t frame_id = -1;
@@ -131,16 +135,19 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   replacer_->RecordAccess(frame_id, access_type);
   // 设置frame不可驱逐
   replacer_->SetEvictable(frame_id, false);
+  // std::cout << ", page_count: " << pages_[page_table_[page_id]].GetPinCount() << std::endl;
   return &pages_[frame_id];
 }
 
 auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unused]] AccessType access_type) -> bool {
   // 加锁
   std::scoped_lock lock(latch_);
+  // std::cout << "UnpinPage: page_id: " << page_id;
   // 如果page_id无效，或者page不在buffer pool中，返回false
   if (page_id == INVALID_PAGE_ID || page_table_.find(page_id) == page_table_.end()) {
     return false;
   }
+  // std::cout << ", page_count: " << pages_[page_table_[page_id]].GetPinCount() << std::endl;
   // 获取frame_id
   frame_id_t frame_id = page_table_[page_id];
   // 更新page的dirty标志
@@ -157,6 +164,8 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
   if (pages_[frame_id].GetPinCount() == 0) {
     replacer_->SetEvictable(frame_id, true);
   }
+  // std::cout << "UnpinPage over: page_id: " << page_id << ", page_count: " <<
+  // pages_[page_table_[page_id]].GetPinCount();
   return true;
 }
 
@@ -241,12 +250,30 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
 
 auto BufferPoolManager::AllocatePage() -> page_id_t { return next_page_id_++; }
 
-auto BufferPoolManager::FetchPageBasic(page_id_t page_id) -> BasicPageGuard { return {this, nullptr}; }
+auto BufferPoolManager::FetchPageBasic(page_id_t page_id) -> BasicPageGuard {
+  auto page = FetchPage(page_id);
+  return {this, page};
+}
 
-auto BufferPoolManager::FetchPageRead(page_id_t page_id) -> ReadPageGuard { return {this, nullptr}; }
+auto BufferPoolManager::FetchPageRead(page_id_t page_id) -> ReadPageGuard {
+  auto page = FetchPage(page_id);
+  if (page != nullptr) {
+    page->RLatch();
+  }
+  return {this, page};
+}
 
-auto BufferPoolManager::FetchPageWrite(page_id_t page_id) -> WritePageGuard { return {this, nullptr}; }
+auto BufferPoolManager::FetchPageWrite(page_id_t page_id) -> WritePageGuard {
+  auto page = FetchPage(page_id);
+  if (page != nullptr) {
+    page->WLatch();
+  }
+  return {this, page};
+}
 
-auto BufferPoolManager::NewPageGuarded(page_id_t *page_id) -> BasicPageGuard { return {this, nullptr}; }
+auto BufferPoolManager::NewPageGuarded(page_id_t *page_id) -> BasicPageGuard {
+  auto page = NewPage(page_id);
+  return {this, page};
+}
 
 }  // namespace bustub
