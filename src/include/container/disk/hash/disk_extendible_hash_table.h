@@ -123,7 +123,9 @@ class DiskExtendibleHashTable {
                       ExtendibleHTableBucketPage<K, V, KC> *new_bucket, uint32_t new_bucket_idx,
                       uint32_t local_depth_mask);
 
-  auto SplitBucket(ExtendibleHTableDirectoryPage *directory, uint32_t bucket_idx, const K &key, const V &value) -> bool;
+  auto SplitBucket(ExtendibleHTableDirectoryPage *directory, uint32_t bucket_idx) -> bool;
+
+  auto MergeBucket(ExtendibleHTableDirectoryPage *directory, uint32_t bucket_idx) -> bool;
 
   // member variables
   std::string index_name_;
