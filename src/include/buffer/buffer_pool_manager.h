@@ -193,6 +193,14 @@ class BufferPoolManager {
   /** This latch protects shared data structures. We recommend updating this comment to describe what it protects. */
   std::mutex latch_;
 
+  // two-phase locking
+  // free_list is protected by free_list_mutex_
+  std::mutex free_list_mutex_;
+  // page_table is protected by page_table_mutex_
+  std::shared_mutex page_table_mutex_;
+  // pages_ is protected by page_mutexes_mutex_
+  std::vector<std::mutex> page_mutexes_;
+
   /**
    * @brief Allocate a page on disk. Caller should acquire the latch before calling this function.
    * @return the id of the allocated page
