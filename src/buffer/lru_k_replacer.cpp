@@ -18,7 +18,11 @@
 
 namespace bustub {
 
-LRUKReplacer::LRUKReplacer(size_t num_frames, size_t k) : replacer_size_(num_frames), k_(k) {}
+LRUKReplacer::LRUKReplacer(size_t num_frames, size_t k) : replacer_size_(num_frames), k_(k) {
+  node_store_ = new LRUKNode[num_frames];
+}
+
+LRUKReplacer::~LRUKReplacer() { delete[] node_store_; }
 
 auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
   // 加锁
@@ -62,12 +66,6 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
   if (frame_id < 0 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
     return;
   }
-  // 获取frame_id指定的节点
-  auto it = node_store_.find(frame_id);
-  // 如果节点不存在，创建新节点
-  if (it == node_store_.end()) {
-    node_store_[frame_id] = LRUKNode(frame_id, k_);
-  }
 
   // 添加历史记录
   node_store_[frame_id].history_.push_back(current_timestamp_);
@@ -104,13 +102,6 @@ void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
     return;
   }
 
-  // 获取frame_id指定的节点
-  auto it = node_store_.find(frame_id);
-  if (it == node_store_.end()) {
-    return;
-  }
-  auto node = it->second;
-
   if (!node_store_[frame_id].is_evictable_ && set_evictable) {
     // 原先不可驱逐，现在可驱逐
     ++curr_size_;
@@ -126,9 +117,6 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
   std::lock_guard<std::mutex> lock(latch_);
   // 判断frame_id是否合法
   if (frame_id < 0 || frame_id > static_cast<frame_id_t>(replacer_size_)) {
-    return;
-  }
-  if (node_store_.find(frame_id) == node_store_.end()) {
     return;
   }
   // 判断frame_id是否可驱逐
