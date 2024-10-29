@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "storage/disk/disk_scheduler.h"
+#include <chrono>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include "common/exception.h"
@@ -20,35 +22,71 @@ namespace bustub {
 
 DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_manager) {
   // Spawn the background thread
-  background_thread_.emplace([&] { StartWorkerThread(); });
+  for (size_t i = 0; i < min_threads_; i++) {
+    workers_.emplace_back(&DiskScheduler::NewThread, this);
+  }
 }
 
 DiskScheduler::~DiskScheduler() {
-  // Put a `std::nullopt` in the queue to signal to exit the loop
-  request_queue_.Put(std::nullopt);
-  if (background_thread_.has_value()) {
-    background_thread_->join();
+  {
+    // 加锁
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    // 停止线程池
+    stop_ = true;
+  }
+  // 唤醒所有线程
+  condition_.notify_all();
+  // 等待所有线程结束
+  for (auto &worker : workers_) {
+    worker.join();
+  }
+}
+
+void DiskScheduler::NewThread() {
+  while (true) {
+    std::function<void()> task;
+    {
+      std::unique_lock<std::mutex> lock(queue_mutex_);
+      // 等待任务队列不为空或者stop_为true
+      condition_.wait(lock, [this] { return !tasks_.empty() || stop_; });
+      // 如果stop_为true，退出线程
+      if (stop_ && tasks_.empty()) {
+        return;
+      }
+      // 取出任务
+      task = std::move(tasks_.front());
+      tasks_.pop();
+    }
+    // 执行任务
+    task();
   }
 }
 
 void DiskScheduler::Schedule(DiskRequest r) {
   // 将disk_request放入channel队列中
-  request_queue_.Put(std::make_optional<DiskRequest>(std::move(r)));
+  auto request = std::make_shared<DiskRequest>(std::move(r));
+  {
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    if (stop_) {
+      throw Exception("Enqueue on stopped ThreadPool");
+    }
+    tasks_.emplace([this, request = std::move(request)]() mutable {
+      // 执行读写操作
+      if (request->is_write_) {
+        disk_manager_->WritePage(request->page_id_, request->data_);
+      } else {
+        disk_manager_->ReadPage(request->page_id_, request->data_);
+      }
+      // Signal the issuer that the request has been completed
+      request->callback_.set_value(true);
+    });
+    if (workers_.size() < max_threads_ && tasks_.size() > 2) {
+      workers_.emplace_back(&DiskScheduler::NewThread, this);
+    }
+  }
+  condition_.notify_one();
 }
 
-void DiskScheduler::StartWorkerThread() {
-  std::optional<DiskRequest> request;
-  // 从channel队列中取出disk_request并执行
-  while ((request = request_queue_.Get()) != std::nullopt) {
-    // 执行读写操作
-    if (request->is_write_) {
-      disk_manager_->WritePage(request->page_id_, request->data_);
-    } else {
-      disk_manager_->ReadPage(request->page_id_, request->data_);
-    }
-    // Signal the issuer that the request has been completed
-    request->callback_.set_value(true);
-  }
-}
+void DiskScheduler::StartWorkerThread(DiskRequest request) {}
 
 }  // namespace bustub

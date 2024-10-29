@@ -12,9 +12,17 @@
 
 #pragma once
 
+#include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <future>  // NOLINT
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
+#include <stdexcept>
 #include <thread>  // NOLINT
+#include <vector>
 
 #include "common/channel.h"
 #include "storage/disk/disk_manager.h"
@@ -71,7 +79,7 @@ class DiskScheduler {
    * The background thread needs to process requests while the DiskScheduler exists, i.e., this function should not
    * return until ~DiskScheduler() is called. At that point you need to make sure that the function does return.
    */
-  void StartWorkerThread();
+  void StartWorkerThread(DiskRequest request);
 
   using DiskSchedulerPromise = std::promise<bool>;
 
@@ -90,13 +98,22 @@ class DiskScheduler {
    */
   void ProcessDiskRequest(DiskRequest request);
 
+  void NewThread();
+
  private:
   /** Pointer to the disk manager. */
   DiskManager *disk_manager_ __attribute__((__unused__));
-  /** A shared queue to concurrently schedule and process requests. When the DiskScheduler's destructor is called,
-   * `std::nullopt` is put into the queue to signal to the background thread to stop execution. */
-  Channel<std::optional<DiskRequest>> request_queue_;
-  /** The background thread responsible for issuing scheduled requests to the disk manager. */
-  std::optional<std::thread> background_thread_;
+  // need to keep track of threads so we can join them
+  std::vector<std::thread> workers_;
+  // the task queue
+  std::queue<std::function<void()>> tasks_;
+  // num_threads
+  size_t min_threads_{2};
+  size_t max_threads_{20};
+
+  // synchronization、
+  std::mutex queue_mutex_;
+  std::condition_variable condition_;
+  bool stop_{false};
 };
 }  // namespace bustub
