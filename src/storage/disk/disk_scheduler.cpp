@@ -80,7 +80,7 @@ void DiskScheduler::Schedule(DiskRequest r) {
       // Signal the issuer that the request has been completed
       request->callback_.set_value(true);
     });
-    if (workers_.size() < max_threads_ && tasks_.size() > 2) {
+    if (workers_.size() < max_threads_ && tasks_.size() > thread_condition_) {
       workers_.emplace_back(&DiskScheduler::NewThread, this);
     }
   }

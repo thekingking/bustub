@@ -74,7 +74,11 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id, [[maybe_unused]] AccessType
 
   // 新加入记录
   if (node_store_[frame_id].history_.size() == 1) {
-    history_list_.push_back(frame_id);
+    if (access_type == AccessType::Scan) {
+      history_list_.push_front(frame_id);
+    } else {
+      history_list_.push_back(frame_id);
+    }
   }
 
   // 记录达到k次，加入lru队列
