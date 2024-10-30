@@ -79,7 +79,7 @@ class DiskScheduler {
    * The background thread needs to process requests while the DiskScheduler exists, i.e., this function should not
    * return until ~DiskScheduler() is called. At that point you need to make sure that the function does return.
    */
-  void StartWorkerThread(DiskRequest request);
+  void StartWorkerThread(std::shared_ptr<DiskRequest> request);
 
   using DiskSchedulerPromise = std::promise<bool>;
 
@@ -110,7 +110,7 @@ class DiskScheduler {
   // num_threads
   size_t min_threads_{1};
   size_t max_threads_{16};
-  size_t thread_condition_{1};
+  size_t thread_condition_{2};
 
   // synchronization、
   std::mutex queue_mutex_;
