@@ -47,8 +47,6 @@ DiskExtendibleHashTable<K, V, KC>::DiskExtendibleHashTable(const std::string &na
   header_page->Init(header_max_depth_);
 }
 
-//! 先不加锁，先实现功能
-
 /*****************************************************************************
  * SEARCH
  *****************************************************************************/
@@ -74,6 +72,8 @@ auto DiskExtendibleHashTable<K, V, KC>::GetValue(const K &key, std::vector<V> *r
   // get the bucket page
   auto bucket_idx = directory_page->HashToBucketIndex(hash);
   auto bucket_page_id = directory_page->GetBucketPageId(bucket_idx);
+  directory_guard.Drop();
+  directory_page = nullptr;
   if (bucket_page_id == INVALID_PAGE_ID) {
     return false;
   }
@@ -154,8 +154,7 @@ auto DiskExtendibleHashTable<K, V, KC>::InsertToNewDirectory(ExtendibleHTableHea
   // create a new directory page
   page_id_t new_directory_page_id;
   BasicPageGuard new_directory_guard = bpm_->NewPageGuarded(&new_directory_page_id);
-  WritePageGuard new_directory_guard_write = new_directory_guard.UpgradeWrite();
-  auto new_directory_page = new_directory_guard_write.AsMut<ExtendibleHTableDirectoryPage>();
+  auto new_directory_page = new_directory_guard.AsMut<ExtendibleHTableDirectoryPage>();
   new_directory_page->Init(directory_max_depth_);
 
   //! 考虑可能会插入失败
@@ -173,8 +172,7 @@ auto DiskExtendibleHashTable<K, V, KC>::InsertToNewBucket(ExtendibleHTableDirect
   // create a new bucket page
   page_id_t new_bucket_page_id;
   BasicPageGuard new_bucket_guard = bpm_->NewPageGuarded(&new_bucket_page_id);
-  WritePageGuard new_bucket_guard_write = new_bucket_guard.UpgradeWrite();
-  auto new_bucket_page = new_bucket_guard_write.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
+  auto new_bucket_page = new_bucket_guard.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
 
   // initialize the new bucket page
   new_bucket_page->Init(bucket_max_size_);
@@ -205,8 +203,7 @@ auto DiskExtendibleHashTable<K, V, KC>::SplitBucket(ExtendibleHTableDirectoryPag
   // create a new bucket page
   page_id_t new_bucket_page_id = INVALID_PAGE_ID;
   BasicPageGuard new_bucket_guard = bpm_->NewPageGuarded(&new_bucket_page_id);
-  WritePageGuard new_bucket_guard_write = new_bucket_guard.UpgradeWrite();
-  auto new_bucket_page = new_bucket_guard_write.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
+  auto new_bucket_page = new_bucket_guard.AsMut<ExtendibleHTableBucketPage<K, V, KC>>();
   new_bucket_page->Init(bucket_max_size_);
 
   // grow the directory if local_depth == global_depth
@@ -251,11 +248,7 @@ void DiskExtendibleHashTable<K, V, KC>::MigrateEntries(ExtendibleHTableBucketPag
 template <typename K, typename V, typename KC>
 void DiskExtendibleHashTable<K, V, KC>::UpdateDirectoryMapping(ExtendibleHTableDirectoryPage *directory,
                                                                uint32_t new_bucket_idx, page_id_t new_bucket_page_id,
-                                                               uint32_t new_local_depth, uint32_t local_depth_mask) {
-  // update the directory mapping
-  directory->SetBucketPageId(new_bucket_idx, new_bucket_page_id);
-  directory->SetLocalDepth(new_bucket_idx, new_local_depth);
-}
+                                                               uint32_t new_local_depth, uint32_t local_depth_mask) {}
 
 /*****************************************************************************
  * REMOVE

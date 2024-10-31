@@ -71,8 +71,14 @@ void DiskScheduler::Schedule(DiskRequest r) {
       throw Exception("Enqueue on stopped ThreadPool");
     }
     tasks_.emplace([this, request = std::move(request)]() mutable {
-      // 执行磁盘请求
-      StartWorkerThread(std::move(request));
+      // 执行读写操作
+      if (request->is_write_) {
+        disk_manager_->WritePage(request->page_id_, request->data_);
+      } else {
+        disk_manager_->ReadPage(request->page_id_, request->data_);
+      }
+      // Signal the issuer that the request has been completed
+      request->callback_.set_value(true);
     });
     if (workers_.size() < max_threads_ && tasks_.size() > thread_condition_) {
       workers_.emplace_back(&DiskScheduler::NewThread, this);
@@ -81,14 +87,5 @@ void DiskScheduler::Schedule(DiskRequest r) {
   condition_.notify_one();
 }
 
-void DiskScheduler::StartWorkerThread(std::shared_ptr<DiskRequest> request) {
-  // 执行读写操作
-  if (request->is_write_) {
-    disk_manager_->WritePage(request->page_id_, request->data_);
-  } else {
-    disk_manager_->ReadPage(request->page_id_, request->data_);
-  }
-  // Signal the issuer that the request has been completed
-  request->callback_.set_value(true);
-}
+void DiskScheduler::StartWorkerThread(DiskRequest request) {}
 }  // namespace bustub

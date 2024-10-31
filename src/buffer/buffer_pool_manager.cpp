@@ -60,7 +60,6 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
   // 更新page_table_
   page_table_[new_page_id] = frame_id;
 
-  //! pages_ lock
   std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
   page_table_lock.unlock();
   free_list_lock.unlock();
@@ -122,8 +121,6 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   }
   // 更新page_table_
   page_table_[page_id] = frame_id;
-
-  //! pages_ lock
   std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
   page_table_lock.unlock();
   free_list_lock.unlock();
