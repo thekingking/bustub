@@ -50,8 +50,6 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
     if (!replacer_->Evict(&frame_id)) {
       return nullptr;
     }
-    // 更新page_table_
-    page_table_.erase(pages_[frame_id].GetPageId());
   } else {
     // 从free_list中取出一个frame_id
     frame_id = free_list_.front();
@@ -61,6 +59,10 @@ auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
   page_table_[new_page_id] = frame_id;
 
   std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
+  if (free_list_.empty()) {
+    // 更新page_table_
+    page_table_.erase(pages_[frame_id].GetPageId());
+  }
   page_table_lock.unlock();
   free_list_lock.unlock();
   // 如果page是脏页，将page写回disk
@@ -112,8 +114,6 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     if (!replacer_->Evict(&frame_id)) {
       return nullptr;
     }
-    // 更新page_table_
-    page_table_.erase(pages_[frame_id].GetPageId());
   } else {
     // 从free_list中取出一个frame_id
     frame_id = free_list_.back();
@@ -122,6 +122,10 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   // 更新page_table_
   page_table_[page_id] = frame_id;
   std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
+  if (free_list_.empty()) {
+    // 更新page_table_
+    page_table_.erase(pages_[frame_id].GetPageId());
+  }
   page_table_lock.unlock();
   free_list_lock.unlock();
 
