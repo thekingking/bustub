@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <iostream>
 #include <memory>
 #include <unordered_map>
 #include <utility>
@@ -24,6 +25,7 @@
 #include "execution/expressions/abstract_expression.h"
 #include "execution/plans/aggregation_plan.h"
 #include "storage/table/tuple.h"
+#include "type/type_id.h"
 #include "type/value_factory.h"
 
 namespace bustub {
@@ -74,10 +76,35 @@ class SimpleAggregationHashTable {
     for (uint32_t i = 0; i < agg_exprs_.size(); i++) {
       switch (agg_types_[i]) {
         case AggregationType::CountStarAggregate:
+          result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + 1);
+          break;
         case AggregationType::CountAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          } else if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(1);
+          } else {
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + 1);
+          }
+          break;
         case AggregationType::SumAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          } else if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = input.aggregates_[i];
+          } else {
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + input.aggregates_[i].GetAs<int32_t>());
+          }
+          break;
         case AggregationType::MinAggregate:
+          if (!input.aggregates_[i].IsNull() && (result->aggregates_[i].IsNull() || input.aggregates_[i].GetAs<int32_t>() < result->aggregates_[i].GetAs<int32_t>())) {
+            result->aggregates_[i] = input.aggregates_[i]; 
+          }
+          break;
         case AggregationType::MaxAggregate:
+          if (!input.aggregates_[i].IsNull() && (result->aggregates_[i].IsNull() || input.aggregates_[i].GetAs<int32_t>() > result->aggregates_[i].GetAs<int32_t>())) {
+            result->aggregates_[i] = input.aggregates_[i];
+          }
           break;
       }
     }
@@ -89,6 +116,7 @@ class SimpleAggregationHashTable {
    * @param agg_val the value to be inserted
    */
   void InsertCombine(const AggregateKey &agg_key, const AggregateValue &agg_val) {
+    // If the key does not exist, insert it with the initial aggregate value.
     if (ht_.count(agg_key) == 0) {
       ht_.insert({agg_key, GenerateInitialAggregateValue()});
     }
@@ -203,9 +231,11 @@ class AggregationExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   /** Simple aggregation hash table */
-  // TODO(Student): Uncomment SimpleAggregationHashTable aht_;
+  std::unique_ptr<SimpleAggregationHashTable> aht_;
 
   /** Simple aggregation hash table iterator */
-  // TODO(Student): Uncomment SimpleAggregationHashTable::Iterator aht_iterator_;
+  std::unique_ptr<SimpleAggregationHashTable::Iterator> aht_iterator_;
+
+  bool has_executed_ {false};
 };
 }  // namespace bustub
