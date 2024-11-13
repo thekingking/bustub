@@ -42,7 +42,9 @@ auto NestedLoopJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   Tuple right_tuple;
   auto left_schema = left_executor_->GetOutputSchema();
   auto right_schema = right_executor_->GetOutputSchema();
+  // 判断左侧是否还有元组
   while (!left_done_) {
+    // 从右侧table中取tuple
     while (right_executor_->Next(&right_tuple, &right_rid)) {
       if (plan_->Predicate()->EvaluateJoin(&left_tuple_, left_schema, &right_tuple, right_schema).GetAs<bool>()) {
         right_done_ = true;
@@ -58,6 +60,7 @@ auto NestedLoopJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
         return true;
       }
     }
+    // 右侧中没有符合条件的元组，join为left join，需要输出左侧元组
     if (!right_done_ && plan_->GetJoinType() == JoinType::LEFT) {
       std::vector<Value> values;
       for (uint32_t idx = 0; idx < left_schema.GetColumnCount(); ++idx) {
@@ -72,6 +75,7 @@ auto NestedLoopJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       right_done_ = false;
       return true;
     }
+    // 右侧遍历完，重置右侧，左侧取下一个元组
     left_done_ = !left_executor_->Next(&left_tuple_, rid);
     right_executor_->Init();
     right_done_ = false;

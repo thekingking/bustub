@@ -12,15 +12,20 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
+#include "execution/expressions/abstract_expression.h"
 #include "execution/plans/hash_join_plan.h"
 #include "storage/table/tuple.h"
 
 namespace bustub {
+
+
 
 /**
  * HashJoinExecutor executes a nested-loop JOIN on two tables.
@@ -52,8 +57,40 @@ class HashJoinExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
+
+  /** @return The tuple as a HashJoinKey */
+  auto MakeHashJoinKey(const Tuple *tuple, const std::vector<AbstractExpressionRef> &expressions, const Schema &schema) -> HashJoinKey {
+    std::vector<Value> keys;
+    keys.reserve(expressions.size());
+    for (const auto &expr : expressions) {
+      keys.emplace_back(expr->Evaluate(tuple, schema));
+    }
+    return {keys};
+  }
+
+  /** @return The tuple as a HashJoinValue */
+  auto MakeHashJoinValue(const Tuple *tuple, const Schema &schema) -> HashJoinValue {
+    std::vector<Value> vals;
+    for (uint32_t i = 0; i < schema.GetColumnCount(); i++) {
+      vals.emplace_back(tuple->GetValue(&schema, i));
+    }
+    return {vals};
+  }
+
+ private:
   /** The HashJoin plan node to be executed. */
   const HashJoinPlanNode *plan_;
+
+  /** The child executor that produces tuples for the left side of join. */
+  std::unique_ptr<AbstractExecutor> left_child_;
+
+  /** The child executor that produces tuples for the right side of join. */
+  std::unique_ptr<AbstractExecutor> right_child_;
+
+  /** The current tuple from the left child executor. */
+  std::unordered_map<HashJoinKey, std::vector<HashJoinValue>> hash_table_;
+
+  std::list<Tuple> results_;
 };
 
 }  // namespace bustub
