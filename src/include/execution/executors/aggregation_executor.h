@@ -93,16 +93,21 @@ class SimpleAggregationHashTable {
           } else if (result->aggregates_[i].IsNull()) {
             result->aggregates_[i] = input.aggregates_[i];
           } else {
-            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + input.aggregates_[i].GetAs<int32_t>());
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() +
+                                                                   input.aggregates_[i].GetAs<int32_t>());
           }
           break;
         case AggregationType::MinAggregate:
-          if (!input.aggregates_[i].IsNull() && (result->aggregates_[i].IsNull() || input.aggregates_[i].GetAs<int32_t>() < result->aggregates_[i].GetAs<int32_t>())) {
-            result->aggregates_[i] = input.aggregates_[i]; 
+          if (!input.aggregates_[i].IsNull() &&
+              (result->aggregates_[i].IsNull() ||
+               input.aggregates_[i].GetAs<int32_t>() < result->aggregates_[i].GetAs<int32_t>())) {
+            result->aggregates_[i] = input.aggregates_[i];
           }
           break;
         case AggregationType::MaxAggregate:
-          if (!input.aggregates_[i].IsNull() && (result->aggregates_[i].IsNull() || input.aggregates_[i].GetAs<int32_t>() > result->aggregates_[i].GetAs<int32_t>())) {
+          if (!input.aggregates_[i].IsNull() &&
+              (result->aggregates_[i].IsNull() ||
+               input.aggregates_[i].GetAs<int32_t>() > result->aggregates_[i].GetAs<int32_t>())) {
             result->aggregates_[i] = input.aggregates_[i];
           }
           break;
@@ -236,6 +241,6 @@ class AggregationExecutor : public AbstractExecutor {
   /** Simple aggregation hash table iterator */
   std::unique_ptr<SimpleAggregationHashTable::Iterator> aht_iterator_;
 
-  bool has_executed_ {false};
+  bool has_executed_{false};
 };
 }  // namespace bustub

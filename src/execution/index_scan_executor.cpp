@@ -30,6 +30,7 @@ void IndexScanExecutor::Init() {
   Tuple index_key(values, &key_schema);
 
   htable->ScanKey(index_key, &result_rids_, exec_ctx_->GetTransaction());
+  has_scanned_ = false;
 }
 
 auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
