@@ -21,11 +21,9 @@ HashJoinExecutor::HashJoinExecutor(ExecutorContext *exec_ctx, const HashJoinPlan
     : AbstractExecutor(exec_ctx),
       plan_(plan),
       left_child_(std::move(left_child)),
-      right_child_(std::move(right_child)) {
-  
-}
+      right_child_(std::move(right_child)) {}
 
-void HashJoinExecutor::Init() { 
+void HashJoinExecutor::Init() {
   left_child_->Init();
   right_child_->Init();
   RID rid{};
@@ -39,7 +37,7 @@ void HashJoinExecutor::Init() {
   }
 }
 
-auto HashJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool { 
+auto HashJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   // 从保存的结果中取出一个tuple
   if (!results_.empty()) {
     *tuple = results_.front();
@@ -87,7 +85,7 @@ auto HashJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       return true;
     }
   }
-  return false; 
+  return false;
 }
 
 }  // namespace bustub

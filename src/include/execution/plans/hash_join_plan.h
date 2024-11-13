@@ -16,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include "common/util/hash_util.h"
 #include "binder/table_ref/bound_join_ref.h"
 #include "execution/expressions/abstract_expression.h"
 #include "execution/plans/abstract_plan.h"
@@ -81,52 +80,4 @@ class HashJoinPlanNode : public AbstractPlanNode {
   auto PlanNodeToString() const -> std::string override;
 };
 
-struct HashJoinKey {
-  /**
-   * Construct a new hash join key.
-   * @param values the values of the hash join key
-   */
-  std::vector<Value> values_;
-
-  /**
-   * Compares two hash join keys for equality.
-   * @param other the other hash join key to be compared with
-   * @return `true` if both hash join keys have equivalent values, `false` otherwise
-   */
-  auto operator==(const HashJoinKey &other) const -> bool {
-    for (uint32_t i = 0; i < other.values_.size(); ++i) {
-      if (values_[i].CompareEquals(other.values_[i]) != CmpBool::CmpTrue) {
-        return false;
-      }
-    }
-    return true;
-  }
-};
-
-struct HashJoinValue {
-  /**
-   * Construct a new hash join value.
-   * @param values the values of the hash join value
-   */
-  std::vector<Value> values_;
-};
-
 }  // namespace bustub
-
-namespace std {
-
-/** Implements std::hash on HashJoinKey */
-template<>
-struct hash<bustub::HashJoinKey> {
-  auto operator()(const bustub::HashJoinKey &key) const -> std::size_t {
-    size_t curr_hash = 0;
-    for (const auto &key : key.values_) {
-      if (!key.IsNull()) {
-        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&key));
-      }
-    }
-    return curr_hash;
-  }
-};
-
-} // namespace std

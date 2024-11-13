@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "common/util/hash_util.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/expressions/abstract_expression.h"
@@ -24,9 +25,54 @@
 #include "storage/table/tuple.h"
 
 namespace bustub {
+struct HashJoinKey {
+  /**
+   * Construct a new hash join key.
+   * @param values the values of the hash join key
+   */
+  std::vector<Value> values_;
 
+  /**
+   * Compares two hash join keys for equality.
+   * @param other the other hash join key to be compared with
+   * @return `true` if both hash join keys have equivalent values, `false` otherwise
+   */
+  auto operator==(const HashJoinKey &other) const -> bool {
+    for (uint32_t i = 0; i < other.values_.size(); ++i) {
+      if (values_[i].CompareEquals(other.values_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
 
+struct HashJoinValue {
+  /**
+   * Construct a new hash join value.
+   * @param values the values of the hash join value
+   */
+  std::vector<Value> values_;
+};
+}  // namespace bustub
+namespace std {
 
+/** Implements std::hash on HashJoinKey */
+template <>
+struct hash<bustub::HashJoinKey> {
+  auto operator()(const bustub::HashJoinKey &key) const -> std::size_t {
+    size_t curr_hash = 0;
+    for (const auto &key : key.values_) {
+      if (!key.IsNull()) {
+        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&key));
+      }
+    }
+    return curr_hash;
+  }
+};
+
+}  // namespace std
+namespace bustub {
 /**
  * HashJoinExecutor executes a nested-loop JOIN on two tables.
  */
@@ -57,9 +103,9 @@ class HashJoinExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
-
   /** @return The tuple as a HashJoinKey */
-  auto MakeHashJoinKey(const Tuple *tuple, const std::vector<AbstractExpressionRef> &expressions, const Schema &schema) -> HashJoinKey {
+  auto MakeHashJoinKey(const Tuple *tuple, const std::vector<AbstractExpressionRef> &expressions, const Schema &schema)
+      -> HashJoinKey {
     std::vector<Value> keys;
     keys.reserve(expressions.size());
     for (const auto &expr : expressions) {

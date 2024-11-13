@@ -9,6 +9,7 @@
 #include "execution/expressions/column_value_expression.h"
 #include "execution/expressions/comparison_expression.h"
 #include "execution/expressions/constant_value_expression.h"
+#include "execution/expressions/logic_expression.h"
 #include "execution/plans/abstract_plan.h"
 #include "execution/plans/filter_plan.h"
 #include "execution/plans/hash_join_plan.h"
@@ -16,26 +17,16 @@
 #include "execution/plans/projection_plan.h"
 #include "optimizer/optimizer.h"
 #include "type/type_id.h"
-#include "execution/expressions/logic_expression.h"
 
 namespace bustub {
 
-auto ConvertPredicateToJoinKey(
-  const AbstractExpressionRef &predicate,
-  std::vector<AbstractExpressionRef> &left_key_expressions,
-  std::vector<AbstractExpressionRef> &right_key_expressions
-) -> bool {
+auto ConvertPredicateToJoinKey(const AbstractExpressionRef &predicate,
+                               std::vector<AbstractExpressionRef> &left_key_expressions,
+                               std::vector<AbstractExpressionRef> &right_key_expressions) -> bool {
   auto logic_expr = std::dynamic_pointer_cast<LogicExpression>(predicate);
   if (logic_expr != nullptr) {
-    return ConvertPredicateToJoinKey(
-      logic_expr->GetChildAt(0), 
-      left_key_expressions,
-      right_key_expressions
-    ) && ConvertPredicateToJoinKey(
-      logic_expr->GetChildAt(1), 
-      left_key_expressions,
-      right_key_expressions
-    );
+    return ConvertPredicateToJoinKey(logic_expr->GetChildAt(0), left_key_expressions, right_key_expressions) &&
+           ConvertPredicateToJoinKey(logic_expr->GetChildAt(1), left_key_expressions, right_key_expressions);
   }
   auto comparison_expr = std::dynamic_pointer_cast<ComparisonExpression>(predicate);
   if (comparison_expr == nullptr || comparison_expr->comp_type_ != ComparisonType::Equal) {
@@ -79,14 +70,9 @@ auto Optimizer::OptimizeNLJAsHashJoin(const AbstractPlanNodeRef &plan) -> Abstra
       std::vector<AbstractExpressionRef> left_key_expressions;
       std::vector<AbstractExpressionRef> right_key_expressions;
       if (ConvertPredicateToJoinKey(predicate, left_key_expressions, right_key_expressions)) {
-        return std::make_shared<HashJoinPlanNode>(
-          nlj_plan.output_schema_,
-          nlj_plan.GetLeftPlan(),
-          nlj_plan.GetRightPlan(),
-          left_key_expressions,
-          right_key_expressions,
-          nlj_plan.GetJoinType()
-        );
+        return std::make_shared<HashJoinPlanNode>(nlj_plan.output_schema_, nlj_plan.GetLeftPlan(),
+                                                  nlj_plan.GetRightPlan(), left_key_expressions, right_key_expressions,
+                                                  nlj_plan.GetJoinType());
       }
     }
   }
