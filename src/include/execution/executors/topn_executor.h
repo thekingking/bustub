@@ -13,6 +13,7 @@
 #pragma once
 
 #include <memory>
+#include <queue>
 #include <utility>
 #include <vector>
 
@@ -58,10 +59,35 @@ class TopNExecutor : public AbstractExecutor {
   /** @return The size of top_entries_ container, which will be called on each child_executor->Next(). */
   auto GetNumInHeap() -> size_t;
 
+  struct Compare {
+    explicit Compare(const TopNPlanNode *plan) : plan_(plan) {}
+    auto operator()(const Tuple &lhs, const Tuple &rhs) const -> bool {
+      for (const auto &order_by : plan_->GetOrderBy()) {
+        auto order_by_type = order_by.first;
+        auto expr = order_by.second.get();
+        auto lhs_val = expr->Evaluate(&lhs, plan_->OutputSchema());
+        auto rhs_val = expr->Evaluate(&rhs, plan_->OutputSchema());
+        if (lhs_val.CompareLessThan(rhs_val) == CmpBool::CmpTrue) {
+          return order_by_type != OrderByType::DESC;
+        }
+        if (lhs_val.CompareGreaterThan(rhs_val) == CmpBool::CmpTrue) {
+          return order_by_type == OrderByType::DESC;
+        }
+      }
+      return true;
+    }
+
+    const TopNPlanNode *plan_;
+  };
+
  private:
   /** The TopN plan node to be executed */
   const TopNPlanNode *plan_;
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+  /** The tuples produced by the child executor */
+  std::vector<Tuple> top_tuples_;
+  /** The current position in the sorted tuples */
+  size_t curr_pos_{0};
 };
 }  // namespace bustub
