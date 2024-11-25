@@ -12,15 +12,154 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
+#include "catalog/schema.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
+#include "execution/expressions/abstract_expression.h"
+#include "execution/plans/aggregation_plan.h"
 #include "execution/plans/window_plan.h"
 #include "storage/table/tuple.h"
+#include "type/value_factory.h"
 
 namespace bustub {
+
+class SimpleWindowFunctionHashTable {
+  friend class WindowFunctionExecutor;
+
+ public:
+  /**
+   * Construct a new SimpleWindowFunctionHashTable instance.
+   * @param win_exprs the window_function expressions
+   * @param win_types the types of window_function
+   */
+  explicit SimpleWindowFunctionHashTable(AbstractExpressionRef function, const WindowFunctionType win_type,
+                                         std::vector<AbstractExpressionRef> partition_by, Schema schema)
+      : win_type_(win_type),
+        partition_by_(std::move(partition_by)),
+        function_(std::move(function)),
+        schema_(std::move(schema)) {}
+
+  /** @return The initial window_function value for this window_function executor */
+  auto GenerateInitialWindowAggregateValue() -> Value {
+    Value val;
+    switch (win_type_) {
+      case WindowFunctionType::CountStarAggregate:
+        // Count start starts at zero.
+        val = ValueFactory::GetIntegerValue(0);
+        break;
+      case WindowFunctionType::CountAggregate:
+      case WindowFunctionType::SumAggregate:
+      case WindowFunctionType::MinAggregate:
+      case WindowFunctionType::MaxAggregate:
+      case WindowFunctionType::Rank:
+        // Others starts at null.
+        val = ValueFactory::GetNullValueByType(TypeId::INTEGER);
+        break;
+    }
+    return {val};
+  }
+
+  /**
+   * Combines the input into the window_function result.
+   * @param[out] result The output window_function value
+   * @param input The input value
+   */
+  auto CombineWindowAggregateValues(Value *result, const Value &input) -> Value {
+    switch (win_type_) {
+      case WindowFunctionType::CountStarAggregate:
+        *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + 1);
+        break;
+      case WindowFunctionType::CountAggregate:
+        if (input.IsNull()) {
+          break;
+        } else if (result->IsNull()) {
+          *result = ValueFactory::GetIntegerValue(1);
+        } else {
+          *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + 1);
+        }
+        break;
+      case WindowFunctionType::SumAggregate:
+        if (input.IsNull()) {
+          break;
+        } else if (result->IsNull()) {
+          *result = input;
+        } else {
+          *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + input.GetAs<int32_t>());
+        }
+        break;
+      case WindowFunctionType::MinAggregate:
+        if (!input.IsNull() && (result->IsNull() || input.GetAs<int32_t>() < result->GetAs<int32_t>())) {
+          *result = input;
+        }
+        break;
+      case WindowFunctionType::MaxAggregate:
+        if (!input.IsNull() && (result->IsNull() || input.GetAs<int32_t>() > result->GetAs<int32_t>())) {
+          *result = input;
+        }
+        break;
+      case WindowFunctionType::Rank:
+        ++rank_count_;
+        if (result->GetAs<int32_t>() != input.GetAs<int32_t>()) {
+          *result = input;
+          last_rank_count_ = rank_count_;
+        }
+        return ValueFactory::GetIntegerValue(last_rank_count_);
+    }
+    return *result;
+  }
+
+  /**
+   * Inserts a value into the hash table and then combines it with the current window_function.
+   * @param key the key to be inserted
+   * @param val the value to be inserted
+   */
+  auto InsertCombine(const Tuple &tuple) -> Value {
+    auto win_key = MakeAggregateKey(&tuple);
+    auto win_val = function_->Evaluate(&tuple, schema_);
+    // If the key does not exist, insert it with the initial value.
+    if (ht_.count(win_key) == 0) {
+      ht_.insert({win_key, GenerateInitialWindowAggregateValue()});
+    }
+    return CombineWindowAggregateValues(&ht_[win_key], win_val);
+  }
+
+  auto Find(Tuple &tuple) -> Value {
+    auto win_key = MakeAggregateKey(&tuple);
+    return ht_.find(win_key)->second;
+  }
+
+  auto MakeAggregateKey(const Tuple *tuple) -> AggregateKey {
+    std::vector<Value> keys;
+    for (const auto &expr : partition_by_) {
+      keys.emplace_back(expr->Evaluate(tuple, schema_));
+    }
+    return {keys};
+  }
+
+  /**
+   * Clear the hash table
+   */
+  void Clear() { ht_.clear(); }
+
+ private:
+  /** The hash table is just a map from window_function keys to window_function values */
+  std::unordered_map<AggregateKey, Value> ht_{};
+  /** The types of window_function that we have */
+  const WindowFunctionType win_type_;
+
+  std::vector<AbstractExpressionRef> partition_by_;
+
+  AbstractExpressionRef function_;
+
+  Schema schema_;
+
+  uint32_t rank_count_{0};
+  uint32_t last_rank_count_{0};
+};
 
 /**
  * The WindowFunctionExecutor executor executes a window function for columns using window function.
@@ -90,5 +229,11 @@ class WindowFunctionExecutor : public AbstractExecutor {
 
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** The results of window function */
+  std::vector<Tuple> results_;
+
+  /** The current position in the window function tuples */
+  size_t curr_pos_{0};
 };
 }  // namespace bustub
