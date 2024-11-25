@@ -76,38 +76,37 @@ class SimpleAggregationHashTable {
     for (uint32_t i = 0; i < agg_exprs_.size(); i++) {
       switch (agg_types_[i]) {
         case AggregationType::CountStarAggregate:
-          result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + 1);
+          result->aggregates_[i] = result->aggregates_[i].Add(Value(TypeId::INTEGER, 1));
           break;
         case AggregationType::CountAggregate:
-          if (input.aggregates_[i].IsNull()) {
-            break;
-          } else if (result->aggregates_[i].IsNull()) {
-            result->aggregates_[i] = ValueFactory::GetIntegerValue(1);
-          } else {
-            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + 1);
+          if (!input.aggregates_[i].IsNull()) {
+            if (result->aggregates_[i].IsNull()) {
+              result->aggregates_[i] = ValueFactory::GetIntegerValue(1);
+            } else {
+              result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() + 1);
+            }
           }
           break;
         case AggregationType::SumAggregate:
-          if (input.aggregates_[i].IsNull()) {
-            break;
-          } else if (result->aggregates_[i].IsNull()) {
-            result->aggregates_[i] = input.aggregates_[i];
-          } else {
-            result->aggregates_[i] = ValueFactory::GetIntegerValue(result->aggregates_[i].GetAs<int32_t>() +
-                                                                   input.aggregates_[i].GetAs<int32_t>());
+          if (!input.aggregates_[i].IsNull()) {
+            if (result->aggregates_[i].IsNull()) {
+              result->aggregates_[i] = input.aggregates_[i];
+            } else {
+              result->aggregates_[i] = result->aggregates_[i].Add(input.aggregates_[i]);
+            }
           }
           break;
         case AggregationType::MinAggregate:
           if (!input.aggregates_[i].IsNull() &&
               (result->aggregates_[i].IsNull() ||
-               input.aggregates_[i].GetAs<int32_t>() < result->aggregates_[i].GetAs<int32_t>())) {
+               result->aggregates_[i].CompareGreaterThan(input.aggregates_[i]) == CmpBool::CmpTrue)) {
             result->aggregates_[i] = input.aggregates_[i];
           }
           break;
         case AggregationType::MaxAggregate:
           if (!input.aggregates_[i].IsNull() &&
               (result->aggregates_[i].IsNull() ||
-               input.aggregates_[i].GetAs<int32_t>() > result->aggregates_[i].GetAs<int32_t>())) {
+               result->aggregates_[i].CompareLessThan(input.aggregates_[i]) == CmpBool::CmpTrue)) {
             result->aggregates_[i] = input.aggregates_[i];
           }
           break;

@@ -71,33 +71,33 @@ class SimpleWindowFunctionHashTable {
   auto CombineWindowAggregateValues(Value *result, const Value &input) -> Value {
     switch (win_type_) {
       case WindowFunctionType::CountStarAggregate:
-        *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + 1);
+        *result = result->Add(Value(TypeId::INTEGER, 1));
         break;
       case WindowFunctionType::CountAggregate:
-        if (input.IsNull()) {
-          break;
-        } else if (result->IsNull()) {
-          *result = ValueFactory::GetIntegerValue(1);
-        } else {
-          *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + 1);
+        if (!input.IsNull()) {
+          if (result->IsNull()) {
+            *result = ValueFactory::GetIntegerValue(1);
+          } else {
+            *result = result->Add(Value(TypeId::INTEGER, 1));
+          }
         }
         break;
       case WindowFunctionType::SumAggregate:
-        if (input.IsNull()) {
-          break;
-        } else if (result->IsNull()) {
-          *result = input;
-        } else {
-          *result = ValueFactory::GetIntegerValue(result->GetAs<int32_t>() + input.GetAs<int32_t>());
+        if (!input.IsNull()) {
+          if (result->IsNull()) {
+            *result = input;
+          } else {
+            *result = result->Add(input);
+          }
         }
         break;
       case WindowFunctionType::MinAggregate:
-        if (!input.IsNull() && (result->IsNull() || input.GetAs<int32_t>() < result->GetAs<int32_t>())) {
+        if (!input.IsNull() && (result->IsNull() || result->CompareGreaterThan(input) == CmpBool::CmpTrue)) {
           *result = input;
         }
         break;
       case WindowFunctionType::MaxAggregate:
-        if (!input.IsNull() && (result->IsNull() || input.GetAs<int32_t>() > result->GetAs<int32_t>())) {
+        if (!input.IsNull() && (result->IsNull() || result->CompareLessThan(input) == CmpBool::CmpTrue)) {
           *result = input;
         }
         break;

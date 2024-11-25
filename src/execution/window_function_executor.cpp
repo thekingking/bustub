@@ -50,83 +50,49 @@ void WindowFunctionExecutor::Init() {
       break;
     }
   }
-  if (!has_order_by) {
-    // 为每个window function创建一个hash table
-    std::vector<SimpleWindowFunctionHashTable> ahts;
-    // 对每个window function进行处理，每个window_function分开处理
-    uint32_t i = plan_->columns_.size() - plan_->window_functions_.size();
-    auto len = plan_->columns_.size();
-    while (i < len) {
-      auto window_function = plan_->window_functions_.at(i);
+  // 为每个window function创建一个hash table
+  std::vector<SimpleWindowFunctionHashTable> ahts;
+  // 对每个window function进行处理，每个window_function分开处理
+  uint32_t i = plan_->columns_.size() - plan_->window_functions_.size();
+  auto len = plan_->columns_.size();
+  while (i < len) {
+    auto window_function = plan_->window_functions_.at(i);
 
-      auto window_function_type = window_function.type_;
-      auto partition_by = window_function.partition_by_;
-      auto function = window_function.function_;
-      auto order_by = window_function.order_by_;
-      SimpleWindowFunctionHashTable aht =
-          (window_function_type == WindowFunctionType::Rank)
-              ? SimpleWindowFunctionHashTable{order_by[0].second, window_function_type, partition_by, schema}
-              : SimpleWindowFunctionHashTable{function, window_function_type, partition_by, schema};
+    auto window_function_type = window_function.type_;
+    auto partition_by = window_function.partition_by_;
+    auto function = window_function.function_;
+    auto order_by = window_function.order_by_;
+    SimpleWindowFunctionHashTable aht =
+        (window_function_type == WindowFunctionType::Rank)
+            ? SimpleWindowFunctionHashTable{order_by[0].second, window_function_type, partition_by, schema}
+            : SimpleWindowFunctionHashTable{function, window_function_type, partition_by, schema};
+    if (!has_order_by) {
       for (const auto &tuple : tuples) {
         aht.InsertCombine(tuple);
       }
-      ahts.emplace_back(aht);
-      ++i;
     }
-    // 计算window function的最终结果，将结果存入results_
-    for (auto &tuple : tuples) {
-      std::vector<Value> values;
-      auto iter = ahts.begin();
-      for (auto &expr : plan_->columns_) {
-        // 如果是普通的column，直接取值
-        auto column_expr = std::dynamic_pointer_cast<ColumnValueExpression>(expr);
-        if (column_expr->GetColIdx() != static_cast<uint32_t>(-1)) {
-          values.emplace_back(tuple.GetValue(&schema, column_expr->GetColIdx()));
-        } else {
-          auto aht = *iter;
-          values.emplace_back(aht.Find(tuple));
-          ++iter;
-        }
-      }
-      Tuple res = Tuple(values, &plan_->OutputSchema());
-      results_.emplace_back(res);
-    }
-  } else {
-    // 为每个window function创建一个hash table
-    std::vector<SimpleWindowFunctionHashTable> ahts;
-    uint32_t i = plan_->columns_.size() - plan_->window_functions_.size();
-    auto len = plan_->columns_.size();
-    while (i < len) {
-      auto window_function = plan_->window_functions_.at(i);
-
-      auto window_function_type = window_function.type_;
-      auto partition_by = window_function.partition_by_;
-      auto function = window_function.function_;
-      auto order_by = window_function.order_by_;
-
-      SimpleWindowFunctionHashTable aht =
-          (window_function_type == WindowFunctionType::Rank)
-              ? SimpleWindowFunctionHashTable{order_by[0].second, window_function_type, partition_by, schema}
-              : SimpleWindowFunctionHashTable{function, window_function_type, partition_by, schema};
-      ahts.emplace_back(aht);
-      ++i;
-    }
-    for (auto &tuple : tuples) {
-      std::vector<Value> values;
-      int j = 0;
-      for (auto &expr : plan_->columns_) {
-        // 如果是普通的column，直接取值
-        auto column_expr = std::dynamic_pointer_cast<ColumnValueExpression>(expr);
-        if (column_expr->GetColIdx() != static_cast<uint32_t>(-1)) {
-          values.emplace_back(tuple.GetValue(&schema, column_expr->GetColIdx()));
-        } else {
+    ahts.emplace_back(aht);
+    ++i;
+  }
+  for (auto &tuple : tuples) {
+    std::vector<Value> values;
+    int j = 0;
+    for (auto &expr : plan_->columns_) {
+      // 如果是普通的column，直接取值
+      auto column_expr = std::dynamic_pointer_cast<ColumnValueExpression>(expr);
+      if (column_expr->GetColIdx() != static_cast<uint32_t>(-1)) {
+        values.emplace_back(tuple.GetValue(&schema, column_expr->GetColIdx()));
+      } else {
+        if (has_order_by) {
           values.emplace_back(ahts[j].InsertCombine(tuple));
-          ++j;
+        } else {
+          values.emplace_back(ahts[j].Find(tuple));
         }
+        ++j;
       }
-      Tuple res = Tuple(values, &plan_->OutputSchema());
-      results_.emplace_back(res);
     }
+    Tuple res = Tuple(values, &plan_->OutputSchema());
+    results_.emplace_back(res);
   }
 
   curr_pos_ = 0;
