@@ -1,5 +1,6 @@
 #include "execution/execution_common.h"
 #include "catalog/catalog.h"
+#include "catalog/column.h"
 #include "common/config.h"
 #include "common/macros.h"
 #include "concurrency/transaction_manager.h"
@@ -12,7 +13,43 @@ namespace bustub {
 
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple> {
-  UNIMPLEMENTED("not implemented");
+  // if base tuple is deleted, return nullopt
+  bool flag = base_meta.is_deleted_;
+  // Tuple数据
+  std::vector<Value> values;
+  values.reserve(schema->GetColumnCount());
+  for (uint32_t i = 0; i < schema->GetColumnCount(); ++i) {
+    values.push_back(base_tuple.GetValue(schema, i));
+  }
+  // Undo操作
+  for (const auto &undo_log : undo_logs) {
+    // 执行删除操作
+    if (undo_log.is_deleted_) {
+      flag = true;
+    } else {
+      // 执行修改操作
+      flag = false;
+      // 生成undo schema(只包含修改的列，原本没有这个)
+      std::vector<Column> columns;
+      for (uint32_t i = 0; i < undo_log.modified_fields_.size(); ++i) {
+        if (undo_log.modified_fields_[i]) {
+          columns.push_back(schema->GetColumn(i));
+        }
+      }
+      Schema undo_schema(columns);
+      // 执行undo操作，修改对应列
+      for (uint32_t i = 0, j = 0; i < undo_log.modified_fields_.size(); ++i) {
+        if (undo_log.modified_fields_[i]) {
+          values[i] = undo_log.tuple_.GetValue(&undo_schema, j);
+          ++j;
+        }
+      }
+    }
+  }
+  if (flag) {
+    return std::nullopt;
+  }
+  return Tuple(values, schema);
 }
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
