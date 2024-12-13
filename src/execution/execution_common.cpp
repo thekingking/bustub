@@ -46,10 +46,14 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
       }
     }
   }
+  // 如果tuple被删除，返回nullopt
   if (flag) {
     return std::nullopt;
   }
-  return Tuple(values, schema);
+  // 生成新的tuple
+  Tuple res = Tuple(values, schema);
+  res.SetRid(base_tuple.GetRid());
+  return res;
 }
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
