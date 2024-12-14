@@ -1,4 +1,5 @@
 #include "execution/execution_common.h"
+#include <cstdint>
 #include "catalog/catalog.h"
 #include "catalog/column.h"
 #include "common/config.h"
@@ -6,6 +7,7 @@
 #include "concurrency/transaction_manager.h"
 #include "fmt/core.h"
 #include "storage/table/table_heap.h"
+#include "type/type_id.h"
 #include "type/value.h"
 #include "type/value_factory.h"
 
@@ -14,29 +16,33 @@ namespace bustub {
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple> {
   // if base tuple is deleted, return nullopt
-  bool flag = base_meta.is_deleted_;
-  // Tuple数据
+  bool is_deleted = base_meta.is_deleted_;
+  // 生成base tuple的values
   std::vector<Value> values;
   values.reserve(schema->GetColumnCount());
   for (uint32_t i = 0; i < schema->GetColumnCount(); ++i) {
     values.push_back(base_tuple.GetValue(schema, i));
   }
+
   // Undo操作
   for (const auto &undo_log : undo_logs) {
     // 执行删除操作
     if (undo_log.is_deleted_) {
-      flag = true;
+      is_deleted = true;
+      for (uint32_t i = 0; i < schema->GetColumnCount(); ++i) {
+        values[i] = ValueFactory::GetNullValueByType(schema->GetColumn(i).GetType());
+      }
     } else {
       // 执行修改操作
-      flag = false;
+      is_deleted = false;
       // 生成undo schema(只包含修改的列，原本没有这个)
-      std::vector<Column> columns;
+      std::vector<uint32_t> cols;
       for (uint32_t i = 0; i < undo_log.modified_fields_.size(); ++i) {
         if (undo_log.modified_fields_[i]) {
-          columns.push_back(schema->GetColumn(i));
+          cols.push_back(i);
         }
       }
-      Schema undo_schema(columns);
+      Schema undo_schema = Schema::CopySchema(schema, cols);
       // 执行undo操作，修改对应列
       for (uint32_t i = 0, j = 0; i < undo_log.modified_fields_.size(); ++i) {
         if (undo_log.modified_fields_[i]) {
@@ -47,7 +53,7 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
     }
   }
   // 如果tuple被删除，返回nullopt
-  if (flag) {
+  if (is_deleted) {
     return std::nullopt;
   }
   // 生成新的tuple
