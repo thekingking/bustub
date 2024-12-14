@@ -67,10 +67,17 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
   // always use stderr for printing logs...
   fmt::println(stderr, "debug_hook: {}", info);
 
-  fmt::println(
-      stderr,
-      "You see this line of text because you have not implemented `TxnMgrDbg`. You should do this once you have "
-      "finished task 2. Implementing this helper function will save you a lot of time for debugging in later tasks.");
+  // fmt::println(
+  //     stderr,
+  //     "You see this line of text because you have not implemented `TxnMgrDbg`. You should do this once you have "
+  //     "finished task 2. Implementing this helper function will save you a lot of time for debugging in later
+  //     tasks.");
+
+  fmt::println(stderr, "table_name: {}, table_schema: {}", table_info->name_, table_info->schema_.ToString());
+  for (auto iter = table_heap->MakeIterator(); !iter.IsEnd(); ++iter) {
+    fmt::println(stderr, "RID={} tuple={}", iter.GetRID().ToString(),
+                 iter.GetTuple().second.ToString(&table_info->schema_));
+  }
 
   // We recommend implementing this function as traversing the table heap and print the version chain. An example output
   // of our reference solution:

@@ -227,8 +227,8 @@ TEST(TxnScanTest, DISABLED_ScanTest) {  // NOLINT
   WithTxn(txn3, QueryHideResult(*bustub, _var, _txn, query,
                                 IntResult{{2}, {3}, {5}}));  // <- you will need to fill in the answer
   fmt::println(stderr, "E: Verify txn4");
-  WithTxn(txn4,
-          QueryHideResult(*bustub, _var, _txn, query, IntResult{{1}, {3}, {6}}));  // <- you will need to fill in the answer
+  WithTxn(txn4, QueryHideResult(*bustub, _var, _txn, query,
+                                IntResult{{1}, {3}, {6}}));  // <- you will need to fill in the answer
   fmt::println(stderr, "F: Verify txn5");
   WithTxn(txn5, QueryHideResult(*bustub, _var, _txn, query,
                                 IntResult{{2}, {3}, {6}}));  // <- you will need to fill in the answer
