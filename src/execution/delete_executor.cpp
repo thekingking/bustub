@@ -11,7 +11,12 @@
 //===----------------------------------------------------------------------===//
 
 #include <memory>
+#include <optional>
 
+#include "common/config.h"
+#include "common/exception.h"
+#include "concurrency/transaction.h"
+#include "concurrency/transaction_manager.h"
 #include "execution/executors/delete_executor.h"
 #include "type/value.h"
 
@@ -44,8 +49,24 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info->name_);
 
   while (child_executor_->Next(tuple, rid)) {
+    auto tuple_meta = table_info->table_->GetTupleMeta(*rid);
+    auto txn = exec_ctx_->GetTransaction();
+    auto txn_manager = exec_ctx_->GetTransactionManager();
+    // 判断是否是当前事务已在操作的tuple
+    if (tuple_meta.ts_ <= txn->GetReadTs()) {
+      // 更新事务的undo log
+      std::vector<bool> modified_fields = std::vector<bool>(schema.GetColumnCount(), true);
+      auto pre_link = txn_manager->GetUndoLink(*rid);
+      auto undo_link = txn->AppendUndoLog(UndoLog{false, modified_fields, *tuple, tuple_meta.ts_, *pre_link});
+      txn->AppendWriteSet(plan_->GetTableOid(), *rid);
+      txn_manager->UpdateUndoLink(*rid, undo_link, nullptr);
+    } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
+      txn->SetTainted();
+      throw ExecutionException("write-write conflict");
+    }
+
     // Delete the tuple from the table
-    table_info->table_->UpdateTupleMeta({0, true}, *rid);
+    table_info->table_->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, *rid);
     // Delete the tuple from the indexes
     for (auto &index_info : indexes) {
       auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());

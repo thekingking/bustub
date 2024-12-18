@@ -71,6 +71,7 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   }
 
   // TODO(fall2023): Implement the commit logic!
+  // 更新写集合中的tuple的时间戳为提交时间
   auto write_set = txn->GetWriteSets();
   for (auto &table : write_set) {
     TableInfo *table_info = catalog_->GetTable(table.first);
