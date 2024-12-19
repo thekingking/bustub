@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -17,6 +18,7 @@
 #include "common/exception.h"
 #include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "execution/executors/delete_executor.h"
 #include "type/value.h"
 
@@ -63,6 +65,16 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
       txn->SetTainted();
       throw ExecutionException("write-write conflict");
+    } else {
+      auto old_link = txn_manager->GetUndoLink(*rid);
+      if (old_link.has_value()) {
+        // 最开始执行的不是插入操作
+        auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
+        auto base_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, {old_undo_log});
+        txn->ModifyUndoLog(old_link->prev_log_idx_,
+                           UndoLog{false, std::vector<bool>(schema.GetColumnCount(), true), base_tuple.value(),
+                                   old_undo_log.ts_, old_undo_log.prev_version_});
+      }
     }
 
     // Delete the tuple from the table
