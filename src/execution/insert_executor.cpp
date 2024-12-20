@@ -67,7 +67,11 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     for (auto &index_info : indexes) {
       // 将tuple转换为key
       auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
-      index_info->index_->InsertEntry(key, new_rid, exec_ctx_->GetTransaction());
+      auto res = index_info->index_->InsertEntry(key, new_rid, exec_ctx_->GetTransaction());
+      if (!res) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
     }
     ++count;
   }
