@@ -79,8 +79,8 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       is_deleted = false;
       *tuple = *new_tuple;
     }
-    if (!is_deleted && !(plan_->filter_predicate_ != nullptr &&
-                         !plan_->filter_predicate_->Evaluate(&tuple_data, schema).GetAs<bool>())) {
+    if (!is_deleted &&
+        !(plan_->filter_predicate_ != nullptr && !plan_->filter_predicate_->Evaluate(tuple, schema).GetAs<bool>())) {
       return true;
     }
   }

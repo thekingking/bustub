@@ -107,6 +107,18 @@ void TransactionManager::Abort(Transaction *txn) {
   running_txns_.RemoveTxn(txn->read_ts_);
 }
 
-void TransactionManager::GarbageCollection() { UNIMPLEMENTED("not implemented"); }
+void TransactionManager::GarbageCollection() {
+  // 获取水印时间戳
+  timestamp_t watermark_ts = running_txns_.GetWatermark();
+  // 删除所有小于水印时间戳的事务，保留reserve_txn_ids中的事务
+  for (auto it = txn_map_.begin(); it != txn_map_.end();) {
+    if (it->second->commit_ts_ != INVALID_TXN_ID &&
+        (it->second->undo_logs_.empty() || it->second->commit_ts_ < watermark_ts)) {
+      it = txn_map_.erase(it);  // 删除元素并更新迭代器
+    } else {
+      ++it;  // 仅更新迭代器
+    }
+  }
+}
 
 }  // namespace bustub

@@ -4,6 +4,7 @@
 #include "catalog/column.h"
 #include "common/config.h"
 #include "common/macros.h"
+#include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
 #include "fmt/core.h"
 #include "storage/table/table_heap.h"
@@ -72,7 +73,10 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
   //     "You see this line of text because you have not implemented `TxnMgrDbg`. You should do this once you have "
   //     "finished task 2. Implementing this helper function will save you a lot of time for debugging in later
   //     tasks.");
-
+  for (auto &txn : txn_mgr->txn_map_) {
+    fmt::println(stderr, "txn_id: {}, state: {}, read_ts: {}, commit_ts: {}", txn.first,
+                 txn.second->GetTransactionState(), txn.second->GetReadTs(), txn.second->GetCommitTs());
+  }
   fmt::println(stderr, "table_name: {}, table_schema: {}", table_info->name_, table_info->schema_.ToString());
   for (auto iter = table_heap->MakeIterator(); !iter.IsEnd(); ++iter) {
     fmt::println(stderr, "tuple={}", iter.GetTuple().second.ToString(&table_info->schema_));

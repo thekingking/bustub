@@ -71,9 +71,9 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         // 最开始执行的不是插入操作
         auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
         auto base_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, {old_undo_log});
-        txn->ModifyUndoLog(old_link->prev_log_idx_,
-                           UndoLog{false, std::vector<bool>(schema.GetColumnCount(), true), base_tuple.value(),
-                                   old_undo_log.ts_, old_undo_log.prev_version_});
+        txn->AppendWriteSet(plan_->GetTableOid(), *rid);
+        txn->ModifyUndoLog(old_link->prev_log_idx_, UndoLog{false, std::vector<bool>(schema.GetColumnCount(), true),
+                                                            *base_tuple, old_undo_log.ts_, old_undo_log.prev_version_});
       }
     }
 
