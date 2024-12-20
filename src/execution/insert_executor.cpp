@@ -52,6 +52,15 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
 
   // 从child_executor中获取待插入的tuple
   while (child_executor_->Next(tuple, rid)) {
+    for (auto &index_info : indexes) {
+      auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+      std::vector<RID> rids;
+      index_info->index_->ScanKey(key, &rids, txn);
+      if (!rids.empty()) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+    }
     // Insert the tuple into the table
     std::optional<RID> new_rid_optional =
         table_info->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, *tuple);
