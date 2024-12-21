@@ -43,10 +43,49 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   int count = 0;
   auto schema = table_info_->schema_;
   auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
-  Tuple old_tuple;
-  RID old_rid;
+  std::vector<RID> rids;
+  std::vector<Tuple> new_tuples;
+  std::vector<Tuple> old_tuples;
   // 遍历更新tuple
-  while (child_executor_->Next(&old_tuple, &old_rid)) {
+  while (child_executor_->Next(tuple, rid)) {
+    // 生成更新后数据
+    std::vector<Value> new_values;
+    new_values.reserve(schema.GetColumnCount());
+    // 生成更新后的数据
+    for (auto &expr : plan_->target_expressions_) {
+      new_values.push_back(expr->Evaluate(tuple, schema));
+    }
+    // 更新TableHeap中数据
+    auto new_tuple = Tuple{new_values, &schema};
+
+    rids.push_back(*rid);
+    old_tuples.push_back(*tuple);
+    new_tuples.push_back(new_tuple);
+    ++count;
+  }
+  for (auto &index_info : indexes) {
+    auto key_schema = index_info->key_schema_;
+    auto attrs = index_info->index_->GetKeyAttrs();
+    for (int i = 0; i < count; ++i) {
+      auto old_key = old_tuples[i].KeyFromTuple(schema, key_schema, attrs);
+      index_info->index_->DeleteEntry(old_key, rids[i], exec_ctx_->GetTransaction());
+    }
+    for (int i = 0; i < count; ++i) {
+      auto new_key = new_tuples[i].KeyFromTuple(schema, key_schema, attrs);
+      auto res = index_info->index_->InsertEntry(new_key, rids[i], exec_ctx_->GetTransaction());
+      if (!res) {
+        for (int j = 0; j < i; ++j) {
+          auto old_key = old_tuples[j].KeyFromTuple(schema, key_schema, attrs);
+          index_info->index_->InsertEntry(old_key, rids[j], exec_ctx_->GetTransaction());
+        }
+        exec_ctx_->GetTransaction()->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+    }
+  }
+  for (int i = 0; i < count; ++i) {
+    auto old_tuple = old_tuples[i];
+    auto old_rid = rids[i];
     auto tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
     auto txn = exec_ctx_->GetTransaction();
     auto txn_manager = exec_ctx_->GetTransactionManager();
@@ -149,33 +188,8 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       }
     }
     table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple, old_rid);
-
-    // // 将原先的tuple设置为删除状态
-    // table_info_->table_->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, old_rid);
-
-    // // 从expression中获取update后的值
-    // std::vector<Value> values;
-    // values.reserve(plan_->target_expressions_.size());
-    // for (auto &expr : plan_->target_expressions_) {
-    //   values.push_back(expr->Evaluate(&old_tuple, schema));
-    // }
-
-    // // 生成新的tuple并插入到表中
-    // auto new_tuple = Tuple{values, &schema};
-    // auto new_rid_optional = table_info_->table_->InsertTuple({txn->GetTransactionTempTs(), false}, new_tuple);
-    // auto new_rid = new_rid_optional.value();
-
-    // // 更新索引
-    // for (auto &index_info : indexes) {
-    //   auto key_schema = index_info->key_schema_;
-    //   auto attrs = index_info->index_->GetKeyAttrs();
-    //   auto old_key = old_tuple.KeyFromTuple(schema, key_schema, attrs);
-    //   auto new_key = new_tuple.KeyFromTuple(schema, key_schema, attrs);
-    //   index_info->index_->DeleteEntry(old_key, old_rid, exec_ctx_->GetTransaction());
-    //   index_info->index_->InsertEntry(new_key, new_rid, exec_ctx_->GetTransaction());
-    // }
-    ++count;
   }
+
   // 返回更新的tuple数目
   std::vector<Value> result{{TypeId::INTEGER, count}};
   *tuple = Tuple{result, &GetOutputSchema()};

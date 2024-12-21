@@ -71,10 +71,12 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       if (old_link.has_value()) {
         // 最开始执行的不是插入操作
         auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
-        auto base_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, {old_undo_log});
-        txn->ModifyUndoLog(old_link->prev_log_idx_,
-                           UndoLog{old_undo_log.is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
-                                   *base_tuple, old_undo_log.ts_, old_undo_log.prev_version_});
+        if (!old_undo_log.is_deleted_) {
+          auto base_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, {old_undo_log});
+          txn->ModifyUndoLog(old_link->prev_log_idx_,
+                             UndoLog{old_undo_log.is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
+                                     base_tuple.value_or(Tuple{}), old_undo_log.ts_, old_undo_log.prev_version_});
+        }
       }
     }
 
