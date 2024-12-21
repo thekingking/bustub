@@ -79,7 +79,34 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
   }
   fmt::println(stderr, "table_name: {}, table_schema: {}", table_info->name_, table_info->schema_.ToString());
   for (auto iter = table_heap->MakeIterator(); !iter.IsEnd(); ++iter) {
-    fmt::println(stderr, "tuple={}", iter.GetTuple().second.ToString(&table_info->schema_));
+    auto rid = iter.GetRID();
+    auto tuple = iter.GetTuple().second;
+    auto tuple_meta = iter.GetTuple().first;
+    auto pre_link = txn_mgr->GetUndoLink(rid);
+    fmt::println(stderr, "tuple={}, tuple_meta={},{}", tuple.ToString(&table_info->schema_), tuple_meta.ts_,
+                 tuple_meta.is_deleted_ ? "deleted" : "not deleted");
+    if (!pre_link.has_value()) {
+      continue;
+    }
+    UndoLink undo_link = pre_link.value();
+    while (undo_link.IsValid()) {
+      auto undo_log = txn_mgr->GetUndoLogOptional(undo_link);
+      if (!undo_log.has_value()) {
+        break;
+      }
+      auto new_tuple = ReconstructTuple(&table_info->schema_, tuple, tuple_meta, {*undo_log});
+      if (new_tuple.has_value()) {
+        tuple = new_tuple.value();
+        tuple_meta = TupleMeta{undo_log->ts_, undo_log->is_deleted_};
+        fmt::println(stderr, " => tuple={}, tuple_meta={},{}", tuple.ToString(&table_info->schema_), tuple_meta.ts_,
+                     tuple_meta.is_deleted_ ? "deleted" : "not deleted");
+        undo_link = undo_log->prev_version_;
+      } else {
+        fmt::println(stderr, " => tuple=deleted, tuple_meta={},deleted", undo_log->ts_);
+        tuple_meta = TupleMeta{undo_log->ts_, true};
+        undo_link = undo_log->prev_version_;
+      }
+    }
   }
 
   // We recommend implementing this function as traversing the table heap and print the version chain. An example output

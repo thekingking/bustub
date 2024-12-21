@@ -59,7 +59,8 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       // 更新事务的undo log
       std::vector<bool> modified_fields = std::vector<bool>(schema.GetColumnCount(), true);
       auto pre_link = txn_manager->GetUndoLink(*rid);
-      auto undo_link = txn->AppendUndoLog(UndoLog{false, modified_fields, *tuple, tuple_meta.ts_, *pre_link});
+      auto undo_link =
+          txn->AppendUndoLog(UndoLog{false, modified_fields, *tuple, tuple_meta.ts_, pre_link.value_or(UndoLink{})});
       txn->AppendWriteSet(plan_->GetTableOid(), *rid);
       txn_manager->UpdateUndoLink(*rid, undo_link, nullptr);
     } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
@@ -71,19 +72,19 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         // 最开始执行的不是插入操作
         auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
         auto base_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, {old_undo_log});
-        txn->AppendWriteSet(plan_->GetTableOid(), *rid);
-        txn->ModifyUndoLog(old_link->prev_log_idx_, UndoLog{false, std::vector<bool>(schema.GetColumnCount(), true),
-                                                            *base_tuple, old_undo_log.ts_, old_undo_log.prev_version_});
+        txn->ModifyUndoLog(old_link->prev_log_idx_,
+                           UndoLog{old_undo_log.is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
+                                   *base_tuple, old_undo_log.ts_, old_undo_log.prev_version_});
       }
     }
 
     // Delete the tuple from the table
     table_info->table_->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, *rid);
-    // Delete the tuple from the indexes
-    for (auto &index_info : indexes) {
-      auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
-      index_info->index_->DeleteEntry(key, *rid, exec_ctx_->GetTransaction());
-    }
+    // // Delete the tuple from the indexes
+    // for (auto &index_info : indexes) {
+    //   auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+    //   index_info->index_->DeleteEntry(key, *rid, exec_ctx_->GetTransaction());
+    // }
     ++count;
   }
   // Return the number of deleted tuples
