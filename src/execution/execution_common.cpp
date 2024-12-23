@@ -63,6 +63,102 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
   return res;
 }
 
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
+    -> void {
+  auto rid = tuple.GetRid();
+  auto table_info = catalog->GetTable(oid);
+  auto schema = table_info->schema_;
+  auto tuple_meta = table_info->table_->GetTupleMeta(rid);
+  // 判断是否是当前事务已在操作的tuple
+  if (tuple_meta.ts_ <= txn->GetReadTs()) {
+    // 更新事务的undo log
+    std::vector<bool> modified_fields = std::vector<bool>(schema.GetColumnCount(), true);
+    auto pre_link = txn_mgr->GetUndoLink(rid);
+    auto undo_link =
+        txn->AppendUndoLog(UndoLog{false, modified_fields, tuple, tuple_meta.ts_, pre_link.value_or(UndoLink{})});
+    txn->AppendWriteSet(table_info->oid_, rid);
+    txn_mgr->UpdateUndoLink(rid, undo_link, nullptr);
+  } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
+    txn->SetTainted();
+    throw ExecutionException("write-write conflict");
+  } else {
+    auto old_link = txn_mgr->GetUndoLink(rid);
+    if (old_link.has_value()) {
+      // 最开始执行的不是插入操作
+      auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
+      if (!old_undo_log.is_deleted_) {
+        auto base_tuple = ReconstructTuple(&schema, tuple, tuple_meta, {old_undo_log});
+        txn->ModifyUndoLog(old_link->prev_log_idx_,
+                           UndoLog{old_undo_log.is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
+                                   base_tuple.value_or(Tuple{}), old_undo_log.ts_, old_undo_log.prev_version_});
+      }
+    }
+  }
+  table_info->table_->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
+}
+
+auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
+    -> void {
+  std::vector<RID> rids;
+  auto table_info = catalog->GetTable(oid);
+  auto indexes = catalog->GetTableIndexes(table_info->name_);
+  auto schema = table_info->schema_;
+
+  // 判断是否存在索引冲突
+  for (auto &index_info : indexes) {
+    auto key = tuple.KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+    index_info->index_->ScanKey(key, &rids, txn);
+    if (!rids.empty()) {
+      auto tuple_meta = table_info->table_->GetTupleMeta(rids[0]);
+      if (!tuple_meta.is_deleted_ ||
+          (tuple_meta.is_deleted_ && tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId())) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+    }
+  }
+  if (rids.empty()) {
+    // 索引不存在，插入新的tuple，并在关联的索引中插入新的索引项
+    std::optional<RID> new_rid_optional =
+        table_info->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
+    if (!new_rid_optional.has_value()) {
+      return;
+    }
+    RID new_rid = new_rid_optional.value();
+
+    txn_mgr->UpdateVersionLink(new_rid, std::nullopt, nullptr);
+    txn->AppendWriteSet(table_info->oid_, new_rid);
+
+    // 在关联的索引中插入新的索引项
+    for (auto &index_info : indexes) {
+      // 将tuple转换为key
+      auto key = tuple.KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+      auto res = index_info->index_->InsertEntry(key, new_rid, txn);
+      if (!res) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+    }
+  } else {
+    // 索引存在，但是被删除了，更新tuple的元数据
+    auto tuple_meta = table_info->table_->GetTupleMeta(rids[0]);
+    if (tuple_meta.ts_ != txn->GetTransactionId()) {
+      // 原先tuple被删除，且已经提交
+      auto pre_link = txn_mgr->GetUndoLink(rids[0]);
+      UndoLink undo_link = txn->AppendUndoLog(UndoLog{tuple_meta.is_deleted_,
+                                                      std::vector<bool>(schema.GetColumnCount(), false),
+                                                      {},
+                                                      tuple_meta.ts_,
+                                                      pre_link.value_or(UndoLink{})});
+      table_info->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), false}, tuple, rids[0]);
+      txn_mgr->UpdateUndoLink(rids[0], undo_link, nullptr);
+      txn->AppendWriteSet(table_info->oid_, rids[0]);
+    }
+    // 如果tuple已经被删除，直接更新tuple的元数据
+    table_info->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), false}, tuple, rids[0]);
+  }
+}
+
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap) {
   // always use stderr for printing logs...

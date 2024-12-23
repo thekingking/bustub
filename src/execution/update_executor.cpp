@@ -43,7 +43,10 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   int count = 0;
   auto schema = table_info_->schema_;
   auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
-  std::vector<RID> rids;
+  auto txn = exec_ctx_->GetTransaction();
+  auto txn_manager = exec_ctx_->GetTransactionManager();
+  auto catalog = exec_ctx_->GetCatalog();
+  auto table_oid = plan_->GetTableOid();
   std::vector<Tuple> new_tuples;
   std::vector<Tuple> old_tuples;
   // 遍历更新tuple
@@ -57,137 +60,160 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     }
     // 更新TableHeap中数据
     auto new_tuple = Tuple{new_values, &schema};
-
-    rids.push_back(*rid);
     old_tuples.push_back(*tuple);
     new_tuples.push_back(new_tuple);
     ++count;
   }
+  bool has_index_update = false;
   for (auto &index_info : indexes) {
     auto key_schema = index_info->key_schema_;
     auto attrs = index_info->index_->GetKeyAttrs();
+    // 判断有无主键更新
     for (int i = 0; i < count; ++i) {
       auto old_key = old_tuples[i].KeyFromTuple(schema, key_schema, attrs);
-      index_info->index_->DeleteEntry(old_key, rids[i], exec_ctx_->GetTransaction());
-    }
-    for (int i = 0; i < count; ++i) {
       auto new_key = new_tuples[i].KeyFromTuple(schema, key_schema, attrs);
-      auto res = index_info->index_->InsertEntry(new_key, rids[i], exec_ctx_->GetTransaction());
-      if (!res) {
-        for (int j = 0; j < i; ++j) {
-          auto old_key = old_tuples[j].KeyFromTuple(schema, key_schema, attrs);
-          index_info->index_->InsertEntry(old_key, rids[j], exec_ctx_->GetTransaction());
+      for (uint32_t k = 0; k < key_schema.GetColumnCount(); ++k) {
+        if (old_key.GetValue(&key_schema, k).CompareNotEquals(new_key.GetValue(&key_schema, k)) == CmpBool::CmpTrue) {
+          has_index_update = true;
+          break;
         }
-        exec_ctx_->GetTransaction()->SetTainted();
-        throw ExecutionException("write-write conflict");
+      }
+    }
+    // 检查是否存在索引冲突
+    if (has_index_update) {
+      for (int i = 0; i < count; ++i) {
+        auto key1 = new_tuples[i].KeyFromTuple(schema, key_schema, attrs);
+        for (int j = 0; j < count; ++j) {
+          if (i != j) {
+            auto key2 = new_tuples[j].KeyFromTuple(schema, key_schema, attrs);
+            for (uint32_t k = 0; k < key_schema.GetColumnCount(); ++k) {
+              if (key1.GetValue(&key_schema, k).CompareEquals(key2.GetValue(&key_schema, k)) == CmpBool::CmpTrue) {
+                txn->SetTainted();
+                throw ExecutionException("write-write conflict");
+              }
+            }
+          }
+        }
       }
     }
   }
-  for (int i = 0; i < count; ++i) {
-    auto old_tuple = old_tuples[i];
-    auto old_rid = rids[i];
-    auto tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
-    auto txn = exec_ctx_->GetTransaction();
-    auto txn_manager = exec_ctx_->GetTransactionManager();
-    // 生成更新后数据
-    std::vector<Value> new_values;
-    new_values.reserve(schema.GetColumnCount());
-    // 生成更新后的数据
-    for (auto &expr : plan_->target_expressions_) {
-      new_values.push_back(expr->Evaluate(&old_tuple, schema));
+  if (has_index_update) {
+    // 有索引更新
+    for (auto &old_tuple : old_tuples) {
+      DeleteTuple(txn, txn_manager, catalog, table_oid, old_tuple);
     }
-    // 更新TableHeap中数据
-    auto new_tuple = Tuple{new_values, &schema};
-    // 判断是否是当前事务已在操作的tuple
-    if (tuple_meta.ts_ <= txn->GetReadTs()) {
-      // 当前事务第一次执行write操作
-
-      // 生成UndoLog中数据
-      std::vector<bool> modified_fields;
-      std::vector<Value> modified_values;
-      std::vector<uint32_t> cols;
-      modified_fields.reserve(schema.GetColumnCount());
-      // 生成撤销日志中需要的数据
-      for (uint32_t i = 0; i < schema.GetColumnCount(); ++i) {
-        auto old_value = old_tuple.GetValue(&schema, i);
-        if (old_value.CompareEquals(new_values[i]) == CmpBool::CmpTrue) {
-          modified_fields.emplace_back(false);
-        } else {
-          modified_fields.emplace_back(true);
-          cols.push_back(i);
-          modified_values.push_back(old_value);
-        }
+    for (auto &new_tuple : new_tuples) {
+      InsertTuple(txn, txn_manager, catalog, table_oid, new_tuple);
+    }
+  } else {
+    // 无索引更新
+    for (int i = 0; i < count; ++i) {
+      auto old_tuple = old_tuples[i];
+      auto old_rid = old_tuple.GetRid();
+      auto tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
+      auto txn = exec_ctx_->GetTransaction();
+      auto txn_manager = exec_ctx_->GetTransactionManager();
+      // 生成更新后数据
+      std::vector<Value> new_values;
+      new_values.reserve(schema.GetColumnCount());
+      // 生成更新后的数据
+      for (auto &expr : plan_->target_expressions_) {
+        new_values.push_back(expr->Evaluate(&old_tuple, schema));
       }
-      auto modified_tuple_schema = Schema::CopySchema(&schema, cols);
-      auto modified_tuple = Tuple{modified_values, &modified_tuple_schema};
+      // 更新TableHeap中数据
+      auto new_tuple = Tuple{new_values, &schema};
+      // 判断是否是当前事务已在操作的tuple
+      if (tuple_meta.ts_ <= txn->GetReadTs()) {
+        // 当前事务第一次执行write操作
 
-      auto pre_link = txn_manager->GetUndoLink(old_rid);
-      auto undo_link = txn->AppendUndoLog(
-          UndoLog{false, modified_fields, modified_tuple, tuple_meta.ts_, pre_link.value_or(UndoLink{})});
-      txn->AppendWriteSet(plan_->GetTableOid(), old_rid);
-      txn_manager->UpdateUndoLink(old_rid, undo_link, nullptr);
-    } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
-      txn->SetTainted();
-      throw ExecutionException("write-write conflict");
-    } else {
-      // 当前事务再次执行write操作
-      // 获取修改前的数据
-      auto old_link = txn_manager->GetUndoLink(old_rid);
-      if (old_link.has_value()) {
-        // 最开始执行的不是插入操作
-        auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
-
-        // 检查当前update操作产生的modified操作
+        // 生成UndoLog中数据
         std::vector<bool> modified_fields;
+        std::vector<Value> modified_values;
+        std::vector<uint32_t> cols;
         modified_fields.reserve(schema.GetColumnCount());
-        // 生成当前修改记录
+        // 生成撤销日志中需要的数据
         for (uint32_t i = 0; i < schema.GetColumnCount(); ++i) {
           auto old_value = old_tuple.GetValue(&schema, i);
           if (old_value.CompareEquals(new_values[i]) == CmpBool::CmpTrue) {
             modified_fields.emplace_back(false);
           } else {
             modified_fields.emplace_back(true);
-          }
-        }
-        // 获取之前执行的modified记录
-        std::vector<bool> old_modified_fields = old_undo_log.modified_fields_;
-        auto old_modified_tuple = old_undo_log.tuple_;
-        // 生成新的modified记录
-        std::vector<bool> new_modified_fields;
-        std::vector<Value> new_modified_values;
-        std::vector<uint32_t> old_cols;
-        std::vector<uint32_t> cols;
-        // 生成old_modified_tuple的schema
-        for (uint32_t i = 0; i < old_modified_fields.size(); ++i) {
-          if (old_modified_fields[i]) {
-            old_cols.push_back(i);
-          }
-        }
-        auto old_schema = Schema::CopySchema(&schema, old_cols);
-        // 生成new_modified_tuple的schema和modified记录
-        for (uint32_t i = 0, j = 0; i < old_modified_fields.size(); ++i) {
-          if (old_modified_fields[i]) {
             cols.push_back(i);
-            new_modified_values.push_back(old_modified_tuple.GetValue(&old_schema, j));
-            new_modified_fields.push_back(true);
-            ++j;
-          } else if (modified_fields[i]) {
-            cols.push_back(i);
-            new_modified_values.push_back(old_tuple.GetValue(&schema, i));
-            new_modified_fields.push_back(true);
-          } else {
-            new_modified_fields.push_back(false);
+            modified_values.push_back(old_value);
           }
         }
-        auto new_schema = Schema::CopySchema(&schema, cols);
-        auto new_modified_tuple = Tuple{new_modified_values, &new_schema};
+        auto modified_tuple_schema = Schema::CopySchema(&schema, cols);
+        auto modified_tuple = Tuple{modified_values, &modified_tuple_schema};
 
-        txn->ModifyUndoLog(old_link->prev_log_idx_,
-                           UndoLog{old_undo_log.is_deleted_, new_modified_fields, new_modified_tuple, old_undo_log.ts_,
-                                   old_undo_log.prev_version_});
+        auto pre_link = txn_manager->GetUndoLink(old_rid);
+        auto undo_link = txn->AppendUndoLog(
+            UndoLog{false, modified_fields, modified_tuple, tuple_meta.ts_, pre_link.value_or(UndoLink{})});
+        txn->AppendWriteSet(plan_->GetTableOid(), old_rid);
+        txn_manager->UpdateUndoLink(old_rid, undo_link, nullptr);
+      } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      } else {
+        // 当前事务再次执行write操作
+        // 获取修改前的数据
+        auto old_link = txn_manager->GetUndoLink(old_rid);
+        if (old_link.has_value()) {
+          // 最开始执行的不是插入操作
+          auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
+
+          // 检查当前update操作产生的modified操作
+          std::vector<bool> modified_fields;
+          modified_fields.reserve(schema.GetColumnCount());
+          // 生成当前修改记录
+          for (uint32_t i = 0; i < schema.GetColumnCount(); ++i) {
+            auto old_value = old_tuple.GetValue(&schema, i);
+            if (old_value.CompareEquals(new_values[i]) == CmpBool::CmpTrue) {
+              modified_fields.emplace_back(false);
+            } else {
+              modified_fields.emplace_back(true);
+            }
+          }
+          // 获取之前执行的modified记录
+          std::vector<bool> old_modified_fields = old_undo_log.modified_fields_;
+          auto old_modified_tuple = old_undo_log.tuple_;
+          // 生成新的modified记录
+          std::vector<bool> new_modified_fields;
+          std::vector<Value> new_modified_values;
+          std::vector<uint32_t> old_cols;
+          std::vector<uint32_t> cols;
+          // 生成old_modified_tuple的schema
+          for (uint32_t i = 0; i < old_modified_fields.size(); ++i) {
+            if (old_modified_fields[i]) {
+              old_cols.push_back(i);
+            }
+          }
+          auto old_schema = Schema::CopySchema(&schema, old_cols);
+          // 生成new_modified_tuple的schema和modified记录
+          for (uint32_t i = 0, j = 0; i < old_modified_fields.size(); ++i) {
+            if (old_modified_fields[i]) {
+              cols.push_back(i);
+              new_modified_values.push_back(old_modified_tuple.GetValue(&old_schema, j));
+              new_modified_fields.push_back(true);
+              ++j;
+            } else if (modified_fields[i]) {
+              cols.push_back(i);
+              new_modified_values.push_back(old_tuple.GetValue(&schema, i));
+              new_modified_fields.push_back(true);
+            } else {
+              new_modified_fields.push_back(false);
+            }
+          }
+          auto new_schema = Schema::CopySchema(&schema, cols);
+          auto new_modified_tuple = Tuple{new_modified_values, &new_schema};
+
+          txn->ModifyUndoLog(old_link->prev_log_idx_,
+                             UndoLog{old_undo_log.is_deleted_, new_modified_fields, new_modified_tuple,
+                                     old_undo_log.ts_, old_undo_log.prev_version_});
+        }
       }
+      table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple,
+                                              old_rid);
     }
-    table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple, old_rid);
   }
 
   // 返回更新的tuple数目
