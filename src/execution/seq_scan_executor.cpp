@@ -17,6 +17,7 @@
 #include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
 #include "execution/execution_common.h"
+#include "storage/table/tuple.h"
 
 namespace bustub {
 
@@ -50,24 +51,22 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
     // 2. 如果tuple_ts < TXN_START_ID，直接undo，直到没有undo_log或者undo_log的timestamp大于txn的timestamp
     if (tuple_ts > txn_ts && tuple_ts != txn->GetTransactionId()) {
       std::vector<UndoLog> undo_logs;
-      std::optional<UndoLink> undo_link;
-      std::optional<UndoLog> undo_log;
       // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
-      undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid);
-      auto min_ts = tuple_ts;
-      while (undo_link.has_value()) {
-        undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(*undo_link);
-        if (!undo_log.has_value()) {
-          break;
+      std::optional<UndoLink> optional_undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid);
+      if (optional_undo_link.has_value()) {
+        UndoLink undo_link = optional_undo_link.value();
+        std::optional<UndoLog> optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLog(undo_link);
+        while (optional_undo_log.has_value()) {
+          undo_logs.push_back(*optional_undo_log);
+          tuple_ts = optional_undo_log->ts_;
+          undo_link = optional_undo_log->prev_version_;
+          if (tuple_ts <= txn_ts) {
+            break;
+          }
+          optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
         }
-        min_ts = undo_log->ts_;
-        undo_logs.push_back(*undo_log);
-        if (min_ts <= txn_ts) {
-          break;
-        }
-        undo_link = undo_log->prev_version_;
       }
-      if (min_ts > txn_ts) {
+      if (tuple_ts > txn_ts) {
         continue;
       }
       // 重构tuple
