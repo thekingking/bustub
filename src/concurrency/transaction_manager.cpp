@@ -110,7 +110,7 @@ void TransactionManager::Abort(Transaction *txn) {
 void TransactionManager::GarbageCollection() {
   // 获取水印时间戳
   timestamp_t watermark_ts = running_txns_.GetWatermark();
-  // 删除所有小于水印时间戳的事务，保留reserve_txn_ids中的事务
+  // 删除所有小于水印时间戳的事务
   for (auto it = txn_map_.begin(); it != txn_map_.end();) {
     if (it->second->commit_ts_ != INVALID_TXN_ID &&
         (it->second->undo_logs_.empty() || it->second->commit_ts_ < watermark_ts)) {

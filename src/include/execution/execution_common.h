@@ -14,7 +14,7 @@ namespace bustub {
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple>;
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, RID &rid)
     -> void;
 
 auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)

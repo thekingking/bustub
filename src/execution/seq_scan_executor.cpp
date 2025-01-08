@@ -50,22 +50,21 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
     // TXN_START_ID，说明正在进行update，判断是否是当前txn正在进行update，如果不是当前txn的update，需要undo
     // 2. 如果tuple_ts < TXN_START_ID，直接undo，直到没有undo_log或者undo_log的timestamp大于txn的timestamp
     if (tuple_ts > txn_ts && tuple_ts != txn->GetTransactionId()) {
+      // 回退的版本记录
       std::vector<UndoLog> undo_logs;
       // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
-      std::optional<UndoLink> optional_undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid);
-      if (optional_undo_link.has_value()) {
-        UndoLink undo_link = optional_undo_link.value();
-        std::optional<UndoLog> optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLog(undo_link);
-        while (optional_undo_log.has_value()) {
-          undo_logs.push_back(*optional_undo_log);
-          tuple_ts = optional_undo_log->ts_;
-          undo_link = optional_undo_log->prev_version_;
-          if (tuple_ts <= txn_ts) {
-            break;
-          }
-          optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+      UndoLink undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid).value_or(UndoLink{});
+      std::optional<UndoLog> optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+      while (optional_undo_log.has_value()) {
+        undo_logs.push_back(*optional_undo_log);
+        tuple_ts = optional_undo_log->ts_;
+        undo_link = optional_undo_log->prev_version_;
+        if (tuple_ts <= txn_ts) {
+          break;
         }
+        optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
       }
+      
       if (tuple_ts > txn_ts) {
         continue;
       }

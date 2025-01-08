@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "catalog/schema.h"
@@ -18,6 +19,7 @@
 #include "concurrency/transaction_manager.h"
 #include "execution/execution_common.h"
 #include "execution/executors/update_executor.h"
+#include "fmt/core.h"
 #include "type/value.h"
 
 namespace bustub {
@@ -49,6 +51,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   auto table_oid = plan_->GetTableOid();
   std::vector<Tuple> new_tuples;
   std::vector<Tuple> old_tuples;
+  std::vector<RID> rids;
   // 遍历更新tuple
   while (child_executor_->Next(tuple, rid)) {
     // 生成更新后数据
@@ -62,7 +65,11 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     auto new_tuple = Tuple{new_values, &schema};
     old_tuples.push_back(*tuple);
     new_tuples.push_back(new_tuple);
+    rids.push_back(*rid);
     ++count;
+  }
+  if (count == 0) {
+    return false;
   }
   bool has_index_update = false;
   for (auto &index_info : indexes) {
@@ -98,9 +105,10 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     }
   }
   if (has_index_update) {
+    fmt::println(stderr, "has index update");
     // 有索引更新
-    for (auto &old_tuple : old_tuples) {
-      DeleteTuple(txn, txn_manager, catalog, table_oid, old_tuple);
+    for (int i = 0; i < count; ++i) {
+      DeleteTuple(txn, txn_manager, catalog, table_oid, rids[i]);
     }
     for (auto &new_tuple : new_tuples) {
       InsertTuple(txn, txn_manager, catalog, table_oid, new_tuple);
@@ -108,12 +116,48 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   } else {
     // 无索引更新
     for (int i = 0; i < count; ++i) {
-      auto old_tuple = old_tuples[i];
-      auto old_rid = old_tuple.GetRid();
-      auto tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
-      auto txn = exec_ctx_->GetTransaction();
-      auto txn_manager = exec_ctx_->GetTransactionManager();
+      RID old_rid = rids[i];
+
+      // 循环并发冲突检查
+      con_check:
+      TupleMeta tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
+      // 判断是否有写写冲突
+      if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+      std::optional<VersionUndoLink> version_link;
+      // 自旋检查version_link是否被其他事务占用
+      do {
+        version_link = txn_manager->GetVersionLink(old_rid);
+      } while (version_link.has_value() && version_link->in_progress_);
+      // 更新version_link，获取in_progress_锁
+      UndoLink undo_link{};
+      if (version_link.has_value()) {
+        version_link->in_progress_ = true;
+        undo_link = version_link->prev_;
+      } 
+      // 确保之前获取的版本仍是版本链中的最新版本
+      if (!txn_manager->UpdateVersionLink(old_rid, version_link, [&](std::optional<VersionUndoLink> link) {
+        return (link.has_value() && version_link.has_value() && !link->in_progress_ && link->prev_ == version_link->prev_);
+      })) {
+        // 有其他事务在操作，重新执行
+        goto con_check;
+      }
+      // 重置in_progress状态
+      if (version_link.has_value()) {
+        version_link->in_progress_ = false;
+      }
+      // 判断是否有写写冲突
+      if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
+        // 释放in_progress_锁
+        txn_manager->UpdateVersionLink(old_rid, version_link);
+        txn->SetTainted();
+        throw ExecutionException("write-write conflict");
+      }
+
       // 生成更新后数据
+      Tuple old_tuple = table_info_->table_->GetTuple(old_rid).second;
       std::vector<Value> new_values;
       new_values.reserve(schema.GetColumnCount());
       // 生成更新后的数据
@@ -122,10 +166,11 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       }
       // 更新TableHeap中数据
       auto new_tuple = Tuple{new_values, &schema};
+
       // 判断是否是当前事务已在操作的tuple
       if (tuple_meta.ts_ <= txn->GetReadTs()) {
         // 当前事务第一次执行write操作
-
+        
         // 生成UndoLog中数据
         std::vector<bool> modified_fields;
         std::vector<Value> modified_values;
@@ -145,22 +190,19 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         auto modified_tuple_schema = Schema::CopySchema(&schema, cols);
         auto modified_tuple = Tuple{modified_values, &modified_tuple_schema};
 
-        auto pre_link = txn_manager->GetUndoLink(old_rid);
-        auto undo_link = txn->AppendUndoLog(
-            UndoLog{false, modified_fields, modified_tuple, tuple_meta.ts_, pre_link.value_or(UndoLink{})});
+        // 更新的version_link
+        undo_link = txn->AppendUndoLog(
+            UndoLog{tuple_meta.is_deleted_, modified_fields, modified_tuple, tuple_meta.ts_, undo_link});
+        version_link = VersionUndoLink{undo_link, false};
+        // 将修改的tuple信息写入write set中
         txn->AppendWriteSet(plan_->GetTableOid(), old_rid);
-        txn_manager->UpdateUndoLink(old_rid, undo_link, nullptr);
-      } else if (tuple_meta.ts_ != txn->GetTransactionId()) {
-        txn->SetTainted();
-        throw ExecutionException("write-write conflict");
+        
       } else {
         // 当前事务再次执行write操作
         // 获取修改前的数据
-        auto old_link = txn_manager->GetUndoLink(old_rid);
-        if (old_link.has_value()) {
-          // 最开始执行的不是插入操作
-          auto old_undo_log = txn->GetUndoLog(old_link->prev_log_idx_);
-
+        // 最开始执行的不是插入操作
+        auto undo_log = txn_manager->GetUndoLogOptional(undo_link);
+        if (undo_log.has_value()) {
           // 检查当前update操作产生的modified操作
           std::vector<bool> modified_fields;
           modified_fields.reserve(schema.GetColumnCount());
@@ -174,8 +216,8 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
             }
           }
           // 获取之前执行的modified记录
-          std::vector<bool> old_modified_fields = old_undo_log.modified_fields_;
-          auto old_modified_tuple = old_undo_log.tuple_;
+          std::vector<bool> old_modified_fields = undo_log->modified_fields_;
+          auto old_modified_tuple = undo_log->tuple_;
           // 生成新的modified记录
           std::vector<bool> new_modified_fields;
           std::vector<Value> new_modified_values;
@@ -206,13 +248,18 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
           auto new_schema = Schema::CopySchema(&schema, cols);
           auto new_modified_tuple = Tuple{new_modified_values, &new_schema};
 
-          txn->ModifyUndoLog(old_link->prev_log_idx_,
-                             UndoLog{old_undo_log.is_deleted_, new_modified_fields, new_modified_tuple,
-                                     old_undo_log.ts_, old_undo_log.prev_version_});
+          // 更新undo_log
+          txn->ModifyUndoLog(undo_link.prev_log_idx_,
+                            UndoLog{undo_log->is_deleted_, new_modified_fields, new_modified_tuple,
+                                    undo_log->ts_, undo_log->prev_version_});
         }
       }
+      
+      // 更新tuple
       table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple,
                                               old_rid);
+      // 更新version_link状态，释放in_progress_锁
+      txn_manager->UpdateVersionLink(old_rid, version_link);
     }
   }
 

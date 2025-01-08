@@ -182,6 +182,8 @@ TEST(TxnIndexTest, DISABLED_IndexConcurrentUpdateTest) {  // NOLINT
       expected_rows.push_back({i, winner});
     }
     auto query_txn = BeginTxn(*bustub, "query_txn");
+    auto table_info = bustub->catalog_->GetTable("maintable");
+    TxnMgrDbg("IndexConcurrentUpdateTest", bustub->txn_manager_.get(), table_info, table_info->table_.get());
     WithTxn(query_txn, QueryShowResult(*bustub, _var, _txn, "SELECT * FROM maintable", expected_rows));
     TableHeapEntryNoMoreThan(*bustub, bustub->catalog_->GetTable("maintable"), number_cnt);
     if (n == trials - 1 || n == trials - 2) {

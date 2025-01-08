@@ -52,7 +52,7 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   auto table_oid = plan_->GetTableOid();
 
   while (child_executor_->Next(tuple, rid)) {
-    DeleteTuple(txn, txn_mgr, catalog, table_oid, *tuple);
+    DeleteTuple(txn, txn_mgr, catalog, table_oid, *rid);
     // // Delete the tuple from the indexes
     // for (auto &index_info : indexes) {
     //   auto key = tuple->KeyFromTuple(schema, index_info->key_schema_, index_info->index_->GetKeyAttrs());

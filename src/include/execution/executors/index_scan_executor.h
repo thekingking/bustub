@@ -46,10 +46,6 @@ class IndexScanExecutor : public AbstractExecutor {
   /** The index scan plan node to be executed. */
   const IndexScanPlanNode *plan_;
 
-  TableHeap *table_heap_;
-
-  std::vector<RID> result_rids_;
-
   bool has_scanned_{false};
 };
 }  // namespace bustub
