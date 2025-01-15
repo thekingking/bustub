@@ -78,8 +78,13 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
     auto rids = table.second;
     auto table_heap = table_info->table_.get();
     for (auto &rid : rids) {
+      // 更新tuple的时间戳
       TupleMeta tuple_meta = table_heap->GetTupleMeta(rid);
       table_heap->UpdateTupleMeta({commit_ts, tuple_meta.is_deleted_}, rid);
+      // 更新version_link状态，释放in_progress_锁
+      std::optional<VersionUndoLink> version_link = GetVersionLink(rid);
+      version_link->in_progress_ = false;
+      UpdateVersionLink(rid, version_link);
     }
   }
 

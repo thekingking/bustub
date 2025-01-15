@@ -22,7 +22,7 @@ IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanP
   plan_ = plan;
 }
 
-void IndexScanExecutor::Init() { }
+void IndexScanExecutor::Init() {}
 
 auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   if (has_scanned_) {
@@ -33,6 +33,7 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   // 根据索引获取对应tuple
   auto table_info = exec_ctx_->GetCatalog()->GetTable(plan_->table_oid_);
   auto index_info = exec_ctx_->GetCatalog()->GetIndex(plan_->index_oid_);
+  auto txn_manager = exec_ctx_->GetTransactionManager();
   auto key_schema = index_info->key_schema_;
   auto value = plan_->pred_key_->val_;
   std::vector<Value> values{value};
@@ -49,7 +50,7 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   auto txn = exec_ctx_->GetTransaction();
   auto tuple_meta = table_info->table_->GetTuple(rids[0]).first;
   bool is_deleted = tuple_meta.is_deleted_;
-  
+
   // 获取原数据
   *rid = rids[0];
   *tuple = table_info->table_->GetTuple(*rid).second;
@@ -62,8 +63,8 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
     // 回退的版本记录
     std::vector<UndoLog> undo_logs;
     // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
-    UndoLink undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid).value_or(UndoLink{});
-    std::optional<UndoLog> optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+    UndoLink undo_link = txn_manager->GetUndoLink(*rid).value_or(UndoLink{});
+    std::optional<UndoLog> optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
     while (optional_undo_log.has_value()) {
       undo_logs.push_back(*optional_undo_log);
       tuple_ts = optional_undo_log->ts_;
@@ -71,9 +72,9 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       if (tuple_ts <= txn_ts) {
         break;
       }
-      optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+      optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
     }
-    
+
     if (tuple_ts > txn_ts) {
       return false;
     }

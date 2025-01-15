@@ -69,7 +69,8 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     ++count;
   }
   if (count == 0) {
-    return false;
+    txn->SetTainted();
+    throw ExecutionException("write-write conflict");
   }
   bool has_index_update = false;
   for (auto &index_info : indexes) {
@@ -105,7 +106,6 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     }
   }
   if (has_index_update) {
-    fmt::println(stderr, "has index update");
     // 有索引更新
     for (int i = 0; i < count; ++i) {
       DeleteTuple(txn, txn_manager, catalog, table_oid, rids[i]);
@@ -118,8 +118,8 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     for (int i = 0; i < count; ++i) {
       RID old_rid = rids[i];
 
-      // 循环并发冲突检查
-      con_check:
+    // 循环并发冲突检查
+    con_check:
       TupleMeta tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
       // 判断是否有写写冲突
       if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
@@ -130,17 +130,20 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       // 自旋检查version_link是否被其他事务占用
       do {
         version_link = txn_manager->GetVersionLink(old_rid);
-      } while (version_link.has_value() && version_link->in_progress_);
+      } while (version_link.has_value() && version_link->in_progress_ &&
+               table_info_->table_->GetTupleMeta(old_rid).ts_ != txn->GetTransactionId());
       // 更新version_link，获取in_progress_锁
       UndoLink undo_link{};
       if (version_link.has_value()) {
         version_link->in_progress_ = true;
         undo_link = version_link->prev_;
-      } 
+      }
       // 确保之前获取的版本仍是版本链中的最新版本
-      if (!txn_manager->UpdateVersionLink(old_rid, version_link, [&](std::optional<VersionUndoLink> link) {
-        return (link.has_value() && version_link.has_value() && !link->in_progress_ && link->prev_ == version_link->prev_);
-      })) {
+      if (table_info_->table_->GetTupleMeta(old_rid).ts_ != txn->GetTransactionId() &&
+          !txn_manager->UpdateVersionLink(old_rid, version_link, [&](std::optional<VersionUndoLink> link) {
+            return (link.has_value() && version_link.has_value() && !link->in_progress_ &&
+                    link->prev_ == version_link->prev_);
+          })) {
         // 有其他事务在操作，重新执行
         goto con_check;
       }
@@ -156,7 +159,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         throw ExecutionException("write-write conflict");
       }
 
-      // 生成更新后数据
+      // 获取旧数据
       Tuple old_tuple = table_info_->table_->GetTuple(old_rid).second;
       std::vector<Value> new_values;
       new_values.reserve(schema.GetColumnCount());
@@ -170,7 +173,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       // 判断是否是当前事务已在操作的tuple
       if (tuple_meta.ts_ <= txn->GetReadTs()) {
         // 当前事务第一次执行write操作
-        
+
         // 生成UndoLog中数据
         std::vector<bool> modified_fields;
         std::vector<Value> modified_values;
@@ -190,13 +193,15 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         auto modified_tuple_schema = Schema::CopySchema(&schema, cols);
         auto modified_tuple = Tuple{modified_values, &modified_tuple_schema};
 
-        // 更新的version_link
+        // 更新version_link状态
         undo_link = txn->AppendUndoLog(
             UndoLog{tuple_meta.is_deleted_, modified_fields, modified_tuple, tuple_meta.ts_, undo_link});
-        version_link = VersionUndoLink{undo_link, false};
+        version_link = VersionUndoLink{undo_link, true};
+        txn_manager->UpdateVersionLink(old_rid, version_link);
+
         // 将修改的tuple信息写入write set中
         txn->AppendWriteSet(plan_->GetTableOid(), old_rid);
-        
+
       } else {
         // 当前事务再次执行write操作
         // 获取修改前的数据
@@ -250,16 +255,14 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
 
           // 更新undo_log
           txn->ModifyUndoLog(undo_link.prev_log_idx_,
-                            UndoLog{undo_log->is_deleted_, new_modified_fields, new_modified_tuple,
-                                    undo_log->ts_, undo_log->prev_version_});
+                             UndoLog{undo_log->is_deleted_, new_modified_fields, new_modified_tuple, undo_log->ts_,
+                                     undo_log->prev_version_});
         }
       }
-      
+
       // 更新tuple
       table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple,
                                               old_rid);
-      // 更新version_link状态，释放in_progress_锁
-      txn_manager->UpdateVersionLink(old_rid, version_link);
     }
   }
 

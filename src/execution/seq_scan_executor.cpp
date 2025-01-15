@@ -31,6 +31,7 @@ void SeqScanExecutor::Init() {
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   auto schema = plan_->OutputSchema();
+  auto txn_manager = exec_ctx_->GetTransactionManager();
   while (!table_iterator_->IsEnd()) {
     // 从TableHeap中获取数据
     auto [tuple_meta, tuple_data] = table_iterator_->GetTuple();
@@ -53,8 +54,8 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       // 回退的版本记录
       std::vector<UndoLog> undo_logs;
       // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
-      UndoLink undo_link = exec_ctx_->GetTransactionManager()->GetUndoLink(*rid).value_or(UndoLink{});
-      std::optional<UndoLog> optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+      UndoLink undo_link = txn_manager->GetUndoLink(*rid).value_or(UndoLink{});
+      std::optional<UndoLog> optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
       while (optional_undo_log.has_value()) {
         undo_logs.push_back(*optional_undo_log);
         tuple_ts = optional_undo_log->ts_;
@@ -62,9 +63,9 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
         if (tuple_ts <= txn_ts) {
           break;
         }
-        optional_undo_log = exec_ctx_->GetTransactionManager()->GetUndoLogOptional(undo_link);
+        optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
       }
-      
+
       if (tuple_ts > txn_ts) {
         continue;
       }
