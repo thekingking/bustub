@@ -18,6 +18,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/column.h"
@@ -106,6 +107,36 @@ void TransactionManager::Abort(Transaction *txn) {
   }
 
   // TODO(fall2023): Implement the abort logic!
+  auto write_set = txn->GetWriteSets();
+  for (auto &table : write_set) {
+    TableInfo *table_info = catalog_->GetTable(table.first);
+    auto rids = table.second;
+    auto table_heap = table_info->table_.get();
+    for (auto &rid : rids) {
+      // 更新tuple的时间戳
+      TupleMeta tuple_meta = table_heap->GetTupleMeta(rid);
+      auto tuple = table_heap->GetTuple(rid).second;
+      std::optional<VersionUndoLink> version_link = GetVersionLink(rid);
+      std::optional<UndoLog> undo_log = GetUndoLogOptional(version_link->prev_);
+
+      if (undo_log.has_value()) {
+        // revert tuple
+        std::optional<Tuple> old_tuple = ReconstructTuple(&table_info->schema_, tuple, tuple_meta, {*undo_log});
+        if (old_tuple.has_value()) {
+          table_heap->UpdateTupleInPlace({undo_log->ts_, undo_log->is_deleted_}, old_tuple.value(), rid);
+        } else {
+          table_heap->UpdateTupleMeta({undo_log->ts_, true}, rid);
+        }
+        // 更新version_link状态，释放in_progress_锁
+        version_link = VersionUndoLink{undo_log->prev_version_, false};
+      } else {
+        table_heap->UpdateTupleMeta({0, true}, rid);
+        version_link->in_progress_ = false;
+      }
+      // 更新version_link状态，释放in_progress_锁
+      UpdateVersionLink(rid, version_link);
+    }
+  }
 
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
   txn->state_ = TransactionState::ABORTED;
