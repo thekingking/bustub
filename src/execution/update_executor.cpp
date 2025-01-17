@@ -68,10 +68,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     rids.push_back(*rid);
     ++count;
   }
-  if (count == 0) {
-    txn->SetTainted();
-    throw ExecutionException("write-write conflict");
-  }
+
   bool has_index_update = false;
   for (auto &index_info : indexes) {
     auto key_schema = index_info->key_schema_;

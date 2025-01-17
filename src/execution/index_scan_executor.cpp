@@ -22,7 +22,12 @@ IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanP
   plan_ = plan;
 }
 
-void IndexScanExecutor::Init() {}
+void IndexScanExecutor::Init() {
+  auto txn = exec_ctx_->GetTransaction();
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
+  }
+}
 
 auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   if (has_scanned_) {
@@ -48,10 +53,10 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   // 初始化基本信息
   auto schema = plan_->OutputSchema();
   auto txn = exec_ctx_->GetTransaction();
+
+  // 获取基本数据
   auto tuple_meta = table_info->table_->GetTuple(rids[0]).first;
   bool is_deleted = tuple_meta.is_deleted_;
-
-  // 获取原数据
   *rid = rids[0];
   *tuple = table_info->table_->GetTuple(*rid).second;
 

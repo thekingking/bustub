@@ -17,6 +17,7 @@
 #include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
 #include "execution/execution_common.h"
+#include "fmt/core.h"
 #include "storage/table/tuple.h"
 
 namespace bustub {
@@ -27,6 +28,10 @@ SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNod
 void SeqScanExecutor::Init() {
   table_iterator_ =
       std::make_unique<TableIterator>(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid())->table_->MakeIterator());
+  auto txn = exec_ctx_->GetTransaction();
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
+  }
 }
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {

@@ -50,7 +50,55 @@ auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * 
   return txn_ref;
 }
 
-auto TransactionManager::VerifyTxn(Transaction *txn) -> bool { return true; }
+auto TransactionManager::VerifyTxn(Transaction *txn) -> bool {
+  if (txn->GetIsolationLevel() != IsolationLevel::SERIALIZABLE || txn->GetWriteSets().empty()) {
+    return true;
+  }
+  // 获取txn的扫描谓词
+  auto predicate_map = txn->GetScanPredicates();
+  for (auto &t : txn_map_) {
+    auto other_txn = t.second;
+    // 如果other_txn已经提交，且读时间戳大于等于txn的读时间戳，检查是否有冲突
+    if (other_txn->GetCommitTs() != INVALID_TS && other_txn->GetReadTs() >= txn->GetReadTs()) {
+      auto write_sets = other_txn->GetWriteSets();
+      // 遍历other_txn的写集合，检查是否有冲突
+      for (auto &table : write_sets) {
+        auto table_oid = table.first;
+        auto rids = table.second;
+        // 如果table没有扫描谓词，跳过
+        if (predicate_map.find(table_oid) == predicate_map.end()) {
+          continue;
+        }
+        // 获取table的扫描谓词
+        auto predicates = predicate_map[table_oid];
+        // 遍历write_set中的rids，检查是否有冲突
+        for (auto &rid : rids) {
+          auto table_info = catalog_->GetTable(table_oid);
+          auto table_heap = table_info->table_.get();
+          auto schema = table_info->schema_;
+          // 获取当前tuple和之前的tuple
+          auto [cur_tuple_meta, cur_tuple] = table_heap->GetTuple(rid);
+          auto version_link = GetVersionLink(rid);
+          std::optional<UndoLog> undo_log = GetUndoLogOptional(version_link->prev_);
+          Tuple prev_tuple{};
+          TupleMeta prev_tuple_meta{0, true};
+          if (undo_log.has_value() && !undo_log->is_deleted_) {
+            prev_tuple = ReconstructTuple(&schema, cur_tuple, cur_tuple_meta, {*undo_log}).value();
+            prev_tuple_meta = TupleMeta{undo_log->ts_, false};
+          }
+          // 检查是否有冲突
+          for (auto &predicate : predicates) {
+            if ((!cur_tuple_meta.is_deleted_ && predicate->Evaluate(&cur_tuple, schema).GetAs<bool>()) ||
+                (!prev_tuple_meta.is_deleted_ && predicate->Evaluate(&prev_tuple, schema).GetAs<bool>())) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
 
 auto TransactionManager::Commit(Transaction *txn) -> bool {
   std::unique_lock<std::mutex> commit_lck(commit_mutex_);
@@ -72,6 +120,13 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   }
 
   // TODO(fall2023): Implement the commit logic!
+  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
+
+  // 验证是否存在序列化冲突
+  if (!VerifyTxn(txn)) {
+    Abort(txn);
+    return false;
+  }
   // 更新写集合中的tuple的时间戳为提交时间
   auto write_set = txn->GetWriteSets();
   for (auto &table : write_set) {
@@ -89,8 +144,6 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
     }
   }
 
-  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
-
   // TODO(fall2023): set commit timestamp + update last committed timestamp here.
   txn->commit_ts_ = last_commit_ts_.load();
 
@@ -102,6 +155,7 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
 }
 
 void TransactionManager::Abort(Transaction *txn) {
+  std::unique_lock<std::mutex> commit_lck(commit_mutex_);
   if (txn->state_ != TransactionState::RUNNING && txn->state_ != TransactionState::TAINTED) {
     throw Exception("txn not in running / tainted state");
   }
