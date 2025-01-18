@@ -49,41 +49,36 @@ auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   if (rids.empty()) {
     return false;
   }
-
   // 初始化基本信息
   auto schema = plan_->OutputSchema();
   auto txn = exec_ctx_->GetTransaction();
 
   // 获取基本数据
-  auto tuple_meta = table_info->table_->GetTuple(rids[0]).first;
-  bool is_deleted = tuple_meta.is_deleted_;
   *rid = rids[0];
   *tuple = table_info->table_->GetTuple(*rid).second;
 
-  auto tuple_ts = tuple_meta.ts_;
   auto txn_ts = txn->GetReadTs();
 
   // 事务执行，判断是否需要undo
-  if (tuple_ts > txn_ts && tuple_meta.ts_ != txn->GetTransactionId()) {
+  auto is_deleted = table_info->table_->GetTupleMeta(*rid).is_deleted_;
+  if (table_info->table_->GetTupleMeta(*rid).ts_ > txn_ts && table_info->table_->GetTupleMeta(*rid).ts_ != txn->GetTransactionId()) {
     // 回退的版本记录
     std::vector<UndoLog> undo_logs;
     // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
     UndoLink undo_link = txn_manager->GetUndoLink(*rid).value_or(UndoLink{});
     std::optional<UndoLog> optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
-    while (optional_undo_log.has_value()) {
+    auto tuple_ts = table_info->table_->GetTupleMeta(*rid).ts_;
+    while (optional_undo_log.has_value() && tuple_ts > txn_ts) {
       undo_logs.push_back(*optional_undo_log);
       tuple_ts = optional_undo_log->ts_;
       undo_link = optional_undo_log->prev_version_;
-      if (tuple_ts <= txn_ts) {
-        break;
-      }
       optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
     }
 
     if (tuple_ts > txn_ts) {
       return false;
     }
-    auto new_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, undo_logs);
+    auto new_tuple = ReconstructTuple(&schema, *tuple, table_info->table_->GetTupleMeta(*rid), undo_logs);
     // 如果重构失败，直接退出
     if (!new_tuple.has_value()) {
       return false;

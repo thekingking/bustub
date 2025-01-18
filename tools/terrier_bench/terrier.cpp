@@ -205,6 +205,8 @@ void Bench2TaskTransfer(const int thread_id, const int terrier_num, const uint64
   metrics.Begin();
 
   while (!metrics.ShouldFinish()) {
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {}", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     std::stringstream ss;
     auto writer = bustub::StringVectorWriter();
     int terrier_a;
@@ -222,6 +224,8 @@ void Bench2TaskTransfer(const int thread_id, const int terrier_num, const uint64
       metrics.TxnAborted();
       continue;
     }
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 1", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     auto network1 = ExtractOneCell(writer);
     if (!bustub->ExecuteSqlTxn(select2, writer, txn)) {
       bustub->txn_manager_->Abort(txn);
@@ -241,6 +245,8 @@ void Bench2TaskTransfer(const int thread_id, const int terrier_num, const uint64
       metrics.TxnAborted();
       continue;
     }
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 2", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     auto result = ExtractOneCell(writer);
     if (result != "1") {
       fmt::print(stderr, "unexpected result when update \"{}\" != 1\n", result);
@@ -251,6 +257,8 @@ void Bench2TaskTransfer(const int thread_id, const int terrier_num, const uint64
       metrics.TxnAborted();
       continue;
     }
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 3", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     result = ExtractOneCell(writer);
     if (result != "1") {
       fmt::print(stderr, "unexpected result when update \"{}\" != 1\n", result);
@@ -258,15 +266,24 @@ void Bench2TaskTransfer(const int thread_id, const int terrier_num, const uint64
     }
     metrics.TxnCommitted();
 
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 4", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     if (!bustub->txn_manager_->Commit(txn)) {
+      fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 4.5", thread_id, terrier_num,
+                   duration_ms, iso_lvl);
       metrics.TxnAborted();
       continue;
     }
+
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 5", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
 
     adjustment += receive - transfer_amount;  // losing some tokens...
 
     metrics.TxnCommitted();
     metrics.Report();
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {} 6", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
   }
   token_adjustment.fetch_add(adjustment);
   total_metrics.ReportTransfer(metrics.aborted_txn_cnt_, metrics.committed_txn_cnt_);
@@ -288,6 +305,8 @@ void Bench2TaskJoin(const int thread_id, const int terrier_num, const uint64_t d
   int adjustment = 0;
 
   while (!metrics.ShouldFinish()) {
+    fmt::println(stderr, "thread_id: {}, terrier_num: {}, duration_ms: {}, iso_lvl: {}", thread_id, terrier_num,
+                 duration_ms, iso_lvl);
     std::stringstream ss;
     auto writer = bustub::StringVectorWriter();
     int join_action = join_action_dist(gen);

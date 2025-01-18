@@ -28,6 +28,7 @@
 #include "common/macros.h"
 #include "concurrency/transaction.h"
 #include "execution/execution_common.h"
+#include "fmt/core.h"
 #include "storage/table/table_heap.h"
 #include "storage/table/tuple.h"
 #include "type/type_id.h"
@@ -51,11 +52,12 @@ auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * 
 }
 
 auto TransactionManager::VerifyTxn(Transaction *txn) -> bool {
-  if (txn->GetIsolationLevel() != IsolationLevel::SERIALIZABLE || txn->GetWriteSets().empty()) {
+  if (txn->GetWriteSets().empty()) {
     return true;
   }
   // 获取txn的扫描谓词
   auto predicate_map = txn->GetScanPredicates();
+  std::shared_lock<std::shared_mutex> lck(txn_map_mutex_);
   for (auto &t : txn_map_) {
     auto other_txn = t.second;
     // 如果other_txn已经提交，且读时间戳大于等于txn的读时间戳，检查是否有冲突
@@ -120,13 +122,6 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   }
 
   // TODO(fall2023): Implement the commit logic!
-  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
-
-  // 验证是否存在序列化冲突
-  if (!VerifyTxn(txn)) {
-    Abort(txn);
-    return false;
-  }
   // 更新写集合中的tuple的时间戳为提交时间
   auto write_set = txn->GetWriteSets();
   for (auto &table : write_set) {
@@ -143,6 +138,7 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
       UpdateVersionLink(rid, version_link);
     }
   }
+  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
 
   // TODO(fall2023): set commit timestamp + update last committed timestamp here.
   txn->commit_ts_ = last_commit_ts_.load();
@@ -198,6 +194,7 @@ void TransactionManager::Abort(Transaction *txn) {
 }
 
 void TransactionManager::GarbageCollection() {
+  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
   // 获取水印时间戳
   timestamp_t watermark_ts = running_txns_.GetWatermark();
   // 删除所有小于水印时间戳的事务

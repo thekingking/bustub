@@ -149,6 +149,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         version_link->in_progress_ = false;
       }
       // 判断是否有写写冲突
+      tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
       if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
         // 释放in_progress_锁
         txn_manager->UpdateVersionLink(old_rid, version_link);
