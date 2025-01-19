@@ -29,7 +29,7 @@ void SeqScanExecutor::Init() {
   table_iterator_ =
       std::make_unique<TableIterator>(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid())->table_->MakeIterator());
   auto txn = exec_ctx_->GetTransaction();
-  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE && plan_->filter_predicate_ != nullptr) {
     txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
   }
 }
@@ -37,16 +37,20 @@ void SeqScanExecutor::Init() {
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   auto schema = plan_->OutputSchema();
   auto txn_manager = exec_ctx_->GetTransactionManager();
+  auto table_info = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid());
+  auto txn = exec_ctx_->GetTransaction();
   while (!table_iterator_->IsEnd()) {
     // 从TableHeap中获取数据
-    auto [tuple_meta, tuple_data] = table_iterator_->GetTuple();
-    *rid = tuple_data.GetRid();
+    *rid = table_iterator_->GetRID();
+    auto page_guard = table_info->table_->AcquireTablePageReadLock(*rid);
+    auto page = page_guard.As<TablePage>();
+    auto [tuple_meta, tuple_data] = table_info->table_->GetTupleWithLockAcquired(*rid, page);
     *tuple = tuple_data;
+
     // 更新table_iterator_
     ++(*table_iterator_);
 
     // 获取tuple的timestamp和当前txn的timestamp
-    auto txn = exec_ctx_->GetTransaction();
     auto tuple_ts = tuple_meta.ts_;
     auto txn_ts = txn->GetReadTs();
     bool is_deleted = tuple_meta.is_deleted_;
@@ -61,13 +65,10 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
       // 循环获取undo_log，直到undo_log的timestamp小于等于txn的timestamp
       UndoLink undo_link = txn_manager->GetUndoLink(*rid).value_or(UndoLink{});
       std::optional<UndoLog> optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
-      while (optional_undo_log.has_value()) {
+      while (optional_undo_log.has_value() && tuple_ts > txn_ts) {
         undo_logs.push_back(*optional_undo_log);
         tuple_ts = optional_undo_log->ts_;
         undo_link = optional_undo_log->prev_version_;
-        if (tuple_ts <= txn_ts) {
-          break;
-        }
         optional_undo_log = txn_manager->GetUndoLogOptional(undo_link);
       }
 
@@ -75,7 +76,7 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
         continue;
       }
       // 重构tuple
-      auto new_tuple = bustub::ReconstructTuple(&schema, *tuple, tuple_meta, undo_logs);
+      auto new_tuple = ReconstructTuple(&schema, *tuple, tuple_meta, undo_logs);
       // 如果重构失败，继续下一个tuple
       if (!new_tuple.has_value()) {
         continue;

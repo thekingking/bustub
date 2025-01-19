@@ -61,38 +61,57 @@ auto TransactionManager::VerifyTxn(Transaction *txn) -> bool {
   for (auto &t : txn_map_) {
     auto other_txn = t.second;
     // 如果other_txn已经提交，且读时间戳大于等于txn的读时间戳，检查是否有冲突
-    if (other_txn->GetCommitTs() != INVALID_TS && other_txn->GetReadTs() >= txn->GetReadTs()) {
+    if (other_txn->GetTransactionState() == TransactionState::COMMITTED &&
+        other_txn->GetCommitTs() > txn->GetReadTs()) {
       auto write_sets = other_txn->GetWriteSets();
       // 遍历other_txn的写集合，检查是否有冲突
-      for (auto &table : write_sets) {
-        auto table_oid = table.first;
-        auto rids = table.second;
+      for (auto &[table_oid, rids] : write_sets) {
         // 如果table没有扫描谓词，跳过
         if (predicate_map.find(table_oid) == predicate_map.end()) {
           continue;
         }
         // 获取table的扫描谓词
         auto predicates = predicate_map[table_oid];
+        auto table_info = catalog_->GetTable(table_oid);
+        auto schema = table_info->schema_;
         // 遍历write_set中的rids，检查是否有冲突
         for (auto &rid : rids) {
-          auto table_info = catalog_->GetTable(table_oid);
-          auto table_heap = table_info->table_.get();
-          auto schema = table_info->schema_;
-          // 获取当前tuple和之前的tuple
-          auto [cur_tuple_meta, cur_tuple] = table_heap->GetTuple(rid);
+          // 获取读锁
+          auto page_guard = table_info->table_->AcquireTablePageReadLock(rid);
+          auto page = page_guard.As<TablePage>();
+
+          // 获取当前tuple的元数据
+          auto [tuple_meta, tuple] = table_info->table_->GetTupleWithLockAcquired(rid, page);
+          // 获取当前tuple的版本记录
           auto version_link = GetVersionLink(rid);
-          std::optional<UndoLog> undo_log = GetUndoLogOptional(version_link->prev_);
-          Tuple prev_tuple{};
-          TupleMeta prev_tuple_meta{0, true};
-          if (undo_log.has_value() && !undo_log->is_deleted_) {
-            prev_tuple = ReconstructTuple(&schema, cur_tuple, cur_tuple_meta, {*undo_log}).value();
-            prev_tuple_meta = TupleMeta{undo_log->ts_, false};
+          auto undo_link = version_link->prev_;
+          std::optional<UndoLog> undo_log = GetUndoLogOptional(undo_link);
+
+          // 回退版本记录，直到当前事务不能够访问的版本
+          while (undo_log.has_value() && tuple_meta.ts_ > txn->GetReadTs()) {
+            // 判断是否有冲突
+            if (!tuple_meta.is_deleted_ && tuple_meta.ts_ < TXN_START_ID) {
+              for (auto &predicate : predicates) {
+                if (predicate->Evaluate(&tuple, schema).GetAs<bool>()) {
+                  return false;
+                }
+              }
+            }
+            auto new_tuple = ReconstructTuple(&schema, tuple, tuple_meta, {*undo_log});
+            if (new_tuple.has_value()) {
+              tuple = new_tuple.value();
+            }
+            tuple_meta = TupleMeta{undo_log->ts_, undo_log->is_deleted_};
+            // 获取下一个版本记录
+            undo_link = undo_log->prev_version_;
+            undo_log = GetUndoLogOptional(undo_link);
           }
-          // 检查是否有冲突
-          for (auto &predicate : predicates) {
-            if ((!cur_tuple_meta.is_deleted_ && predicate->Evaluate(&cur_tuple, schema).GetAs<bool>()) ||
-                (!prev_tuple_meta.is_deleted_ && predicate->Evaluate(&prev_tuple, schema).GetAs<bool>())) {
-              return false;
+          // 判断是否有冲突
+          if (!tuple_meta.is_deleted_ && tuple_meta.ts_ < TXN_START_ID) {
+            for (auto &predicate : predicates) {
+              if (predicate->Evaluate(&tuple, schema).GetAs<bool>()) {
+                return false;
+              }
             }
           }
         }
@@ -130,8 +149,10 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
     auto table_heap = table_info->table_.get();
     for (auto &rid : rids) {
       // 更新tuple的时间戳
-      TupleMeta tuple_meta = table_heap->GetTupleMeta(rid);
-      table_heap->UpdateTupleMeta({commit_ts, tuple_meta.is_deleted_}, rid);
+      auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
+      auto page = page_guard.AsMut<TablePage>();
+      TupleMeta tuple_meta = table_heap->GetTupleMetaWithLockAcquired(rid, page);
+      page->UpdateTupleMeta({commit_ts, tuple_meta.is_deleted_}, rid);
       // 更新version_link状态，释放in_progress_锁
       std::optional<VersionUndoLink> version_link = GetVersionLink(rid);
       version_link->in_progress_ = false;
@@ -164,8 +185,9 @@ void TransactionManager::Abort(Transaction *txn) {
     auto table_heap = table_info->table_.get();
     for (auto &rid : rids) {
       // 更新tuple的时间戳
-      TupleMeta tuple_meta = table_heap->GetTupleMeta(rid);
-      auto tuple = table_heap->GetTuple(rid).second;
+      auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
+      auto page = page_guard.AsMut<TablePage>();
+      auto [tuple_meta, tuple] = table_heap->GetTupleWithLockAcquired(rid, page);
       std::optional<VersionUndoLink> version_link = GetVersionLink(rid);
       std::optional<UndoLog> undo_log = GetUndoLogOptional(version_link->prev_);
 
@@ -173,14 +195,15 @@ void TransactionManager::Abort(Transaction *txn) {
         // revert tuple
         std::optional<Tuple> old_tuple = ReconstructTuple(&table_info->schema_, tuple, tuple_meta, {*undo_log});
         if (old_tuple.has_value()) {
-          table_heap->UpdateTupleInPlace({undo_log->ts_, undo_log->is_deleted_}, old_tuple.value(), rid);
+          table_heap->UpdateTupleInPlaceWithLockAcquired({undo_log->ts_, undo_log->is_deleted_}, old_tuple.value(), rid,
+                                                         page);
         } else {
-          table_heap->UpdateTupleMeta({undo_log->ts_, true}, rid);
+          page->UpdateTupleMeta({undo_log->ts_, true}, rid);
         }
         // 更新version_link状态，释放in_progress_锁
         version_link = VersionUndoLink{undo_log->prev_version_, false};
       } else {
-        table_heap->UpdateTupleMeta({0, true}, rid);
+        page->UpdateTupleMeta({0, true}, rid);
         version_link->in_progress_ = false;
       }
       // 更新version_link状态，释放in_progress_锁

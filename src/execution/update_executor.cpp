@@ -115,9 +115,11 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     for (int i = 0; i < count; ++i) {
       RID old_rid = rids[i];
 
+      auto page_guard = table_info_->table_->AcquireTablePageWriteLock(old_rid);
+      auto page = page_guard.AsMut<TablePage>();
     // 循环并发冲突检查
     con_check:
-      TupleMeta tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
+      auto [tuple_meta, old_tuple] = table_info_->table_->GetTupleWithLockAcquired(old_rid, page);
       // 判断是否有写写冲突
       if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
         txn->SetTainted();
@@ -127,8 +129,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       // 自旋检查version_link是否被其他事务占用
       do {
         version_link = txn_manager->GetVersionLink(old_rid);
-      } while (version_link.has_value() && version_link->in_progress_ &&
-               table_info_->table_->GetTupleMeta(old_rid).ts_ != txn->GetTransactionId());
+      } while (version_link.has_value() && version_link->in_progress_ && tuple_meta.ts_ != txn->GetTransactionId());
       // 更新version_link，获取in_progress_锁
       UndoLink undo_link{};
       if (version_link.has_value()) {
@@ -136,7 +137,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         undo_link = version_link->prev_;
       }
       // 确保之前获取的版本仍是版本链中的最新版本
-      if (table_info_->table_->GetTupleMeta(old_rid).ts_ != txn->GetTransactionId() &&
+      if (tuple_meta.ts_ != txn->GetTransactionId() &&
           !txn_manager->UpdateVersionLink(old_rid, version_link, [&](std::optional<VersionUndoLink> link) {
             return (link.has_value() && version_link.has_value() && !link->in_progress_ &&
                     link->prev_ == version_link->prev_);
@@ -149,7 +150,6 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         version_link->in_progress_ = false;
       }
       // 判断是否有写写冲突
-      tuple_meta = table_info_->table_->GetTupleMeta(old_rid);
       if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
         // 释放in_progress_锁
         txn_manager->UpdateVersionLink(old_rid, version_link);
@@ -157,8 +157,6 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
         throw ExecutionException("write-write conflict");
       }
 
-      // 获取旧数据
-      Tuple old_tuple = table_info_->table_->GetTuple(old_rid).second;
       std::vector<Value> new_values;
       new_values.reserve(schema.GetColumnCount());
       // 生成更新后的数据
@@ -259,8 +257,8 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       }
 
       // 更新tuple
-      table_info_->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), tuple_meta.is_deleted_}, new_tuple,
-                                              old_rid);
+      table_info_->table_->UpdateTupleInPlaceWithLockAcquired({txn->GetTransactionTempTs(), tuple_meta.is_deleted_},
+                                                              new_tuple, old_rid, page);
     }
   }
 

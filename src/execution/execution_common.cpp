@@ -67,9 +67,11 @@ auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
   auto table_info = catalog->GetTable(oid);
   auto schema = table_info->schema_;
 
+  auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
+  auto page = page_guard.AsMut<TablePage>();
 // 循环并发冲突检查
 con_check:
-  auto tuple_meta = table_info->table_->GetTupleMeta(rid);
+  auto [tuple_meta, tuple] = table_info->table_->GetTupleWithLockAcquired(rid, page);
   // 判断是否有写写冲突
   if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
     txn->SetTainted();
@@ -79,8 +81,7 @@ con_check:
   // 自旋检查version_link是否被其他事务占用
   do {
     version_link = txn_mgr->GetVersionLink(rid);
-  } while (version_link.has_value() && version_link->in_progress_ &&
-           table_info->table_->GetTupleMeta(rid).ts_ != txn->GetTransactionId());
+  } while (version_link.has_value() && version_link->in_progress_ && tuple_meta.ts_ != txn->GetTransactionId());
   // 更新version_link，获取in_progress_锁
   UndoLink undo_link{};
   if (version_link.has_value()) {
@@ -88,7 +89,7 @@ con_check:
     undo_link = version_link->prev_;
   }
   // 确保之前获取的版本仍是版本链中的最新版本
-  if (table_info->table_->GetTupleMeta(rid).ts_ != txn->GetTransactionId() &&
+  if (tuple_meta.ts_ != txn->GetTransactionId() &&
       !txn_mgr->UpdateVersionLink(rid, version_link, [&](std::optional<VersionUndoLink> link) {
         return (!link.has_value() && !version_link.has_value()) ||
                (link.has_value() && version_link.has_value() && !link->in_progress_ &&
@@ -107,8 +108,6 @@ con_check:
     txn->SetTainted();
     throw ExecutionException("write-write conflict");
   }
-
-  Tuple tuple = table_info->table_->GetTuple(rid).second;
   // 判断是否是当前事务已在操作的tuple
   if (tuple_meta.ts_ <= txn->GetReadTs()) {
     // 更新version_link状态
@@ -127,7 +126,7 @@ con_check:
                                  base_tuple.value_or(Tuple{}), old_undo_log->ts_, old_undo_log->prev_version_});
     }
   }
-  table_info->table_->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
+  page->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
 }
 
 auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
@@ -143,7 +142,9 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
     index_info->index_->ScanKey(key, &rids, txn);
     // 索引已经存在
     if (!rids.empty()) {
-      auto tuple_meta = table_info->table_->GetTupleMeta(rids[0]);
+      auto page_guard = table_info->table_->AcquireTablePageWriteLock(rids[0]);
+      auto page = page_guard.AsMut<TablePage>();
+      auto tuple_meta = table_info->table_->GetTupleMetaWithLockAcquired(rids[0], page);
       // 索引对应的tuple已经删除或者删除了但是是另一个事务在操作（写写冲突）
       if (!tuple_meta.is_deleted_ ||
           (tuple_meta.is_deleted_ && tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId())) {
@@ -178,10 +179,11 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
     // 索引存在，但是被删除了，更新tuple的元数据
     // 获取tuple的元数据
     RID rid = rids[0];
-
+    auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
+    auto page = page_guard.AsMut<TablePage>();
   // 循环并发冲突检查
   con_check:
-    auto tuple_meta = table_info->table_->GetTupleMeta(rid);
+    auto tuple_meta = table_info->table_->GetTupleMetaWithLockAcquired(rid, page);
     // 判断是否有写写冲突
     if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
       txn->SetTainted();
@@ -191,8 +193,7 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
     // 自旋检查version_link是否被其他事务占用
     do {
       version_link = txn_mgr->GetVersionLink(rid);
-    } while (version_link.has_value() && version_link->in_progress_ &&
-             table_info->table_->GetTupleMeta(rid).ts_ != txn->GetTransactionId());
+    } while (version_link.has_value() && version_link->in_progress_ && tuple_meta.ts_ != txn->GetTransactionId());
     // 更新version_link，获取in_progress_锁
     UndoLink undo_link{};
     if (version_link.has_value()) {
@@ -200,7 +201,7 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
       undo_link = version_link->prev_;
     }
     // 确保之前获取的版本仍是版本链中的最新版本
-    if (table_info->table_->GetTupleMeta(rid).ts_ != txn->GetTransactionId() &&
+    if (tuple_meta.ts_ != txn->GetTransactionId() &&
         !txn_mgr->UpdateVersionLink(rid, version_link, [&](std::optional<VersionUndoLink> link) {
           return (!link.has_value() && !version_link.has_value()) ||
                  (link.has_value() && version_link.has_value() && !link->in_progress_ &&
@@ -230,7 +231,7 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
       txn->AppendWriteSet(table_info->oid_, rid);
     }
     // 如果tuple已经被删除，直接更新tuple的元数据，因为删除时已经更新过undo_log
-    table_info->table_->UpdateTupleInPlace({txn->GetTransactionTempTs(), false}, tuple, rid);
+    table_info->table_->UpdateTupleInPlaceWithLockAcquired({txn->GetTransactionTempTs(), false}, tuple, rid, page);
   }
 }
 
