@@ -19,6 +19,7 @@
 #include "concurrency/transaction_manager.h"
 #include "execution/execution_common.h"
 #include "execution/executors/update_executor.h"
+#include "execution/expressions/column_value_expression.h"
 #include "fmt/core.h"
 #include "type/value.h"
 
@@ -69,35 +70,16 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     ++count;
   }
 
-  bool has_index_update = false;
-  for (auto &index_info : indexes) {
-    auto key_schema = index_info->key_schema_;
-    auto attrs = index_info->index_->GetKeyAttrs();
-    // 判断有无主键更新
-    for (int i = 0; i < count; ++i) {
-      auto old_key = old_tuples[i].KeyFromTuple(schema, key_schema, attrs);
-      auto new_key = new_tuples[i].KeyFromTuple(schema, key_schema, attrs);
-      for (uint32_t k = 0; k < key_schema.GetColumnCount(); ++k) {
-        if (old_key.GetValue(&key_schema, k).CompareNotEquals(new_key.GetValue(&key_schema, k)) == CmpBool::CmpTrue) {
+  auto has_index_update = false;
+  for (uint32_t col_idx = 0; col_idx < schema.GetColumnCount(); ++col_idx) {
+    auto expr = plan_->target_expressions_[col_idx];
+    auto *column_value_expr = dynamic_cast<const ColumnValueExpression *>(expr.get());
+    if (column_value_expr == nullptr) {
+      for (auto index : indexes) {
+        auto key_attrs = index->index_->GetKeyAttrs();
+        if (std::find(key_attrs.begin(), key_attrs.end(), col_idx) != key_attrs.end()) {
           has_index_update = true;
           break;
-        }
-      }
-    }
-    // 检查是否存在索引冲突
-    if (has_index_update) {
-      for (int i = 0; i < count; ++i) {
-        auto key1 = new_tuples[i].KeyFromTuple(schema, key_schema, attrs);
-        for (int j = 0; j < count; ++j) {
-          if (i != j) {
-            auto key2 = new_tuples[j].KeyFromTuple(schema, key_schema, attrs);
-            for (uint32_t k = 0; k < key_schema.GetColumnCount(); ++k) {
-              if (key1.GetValue(&key_schema, k).CompareEquals(key2.GetValue(&key_schema, k)) == CmpBool::CmpTrue) {
-                txn->SetTainted();
-                throw ExecutionException("write-write conflict");
-              }
-            }
-          }
         }
       }
     }
