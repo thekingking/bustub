@@ -181,7 +181,7 @@ class BufferPoolManager {
   /** Array of buffer pool pages. */
   Page *pages_;
   /** Pointer to the disk sheduler. */
-  std::unique_ptr<DiskScheduler> disk_scheduler_ __attribute__((__unused__));
+  std::unique_ptr<DiskScheduler> disk_scheduler_;
   /** Pointer to the log manager. Please ignore this for P1. */
   LogManager *log_manager_ __attribute__((__unused__));
   /** Page table for keeping track of buffer pool pages. */
@@ -193,11 +193,6 @@ class BufferPoolManager {
   /** This latch protects shared data structures. We recommend updating this comment to describe what it protects. */
   std::mutex latch_;
 
-  // two-phase locking
-  // free_list is protected by free_list_mutex_
-  std::mutex free_list_mutex_;
-  // page_table is protected by page_table_mutex_
-  std::shared_mutex page_table_mutex_;
   // pages_ is protected by page_mutexes_mutex_
   std::vector<std::mutex> page_mutexes_;
 
