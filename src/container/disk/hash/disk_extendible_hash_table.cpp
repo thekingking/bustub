@@ -69,16 +69,21 @@ auto DiskExtendibleHashTable<K, V, KC>::GetValue(const K &key, std::vector<V> *r
   ReadPageGuard directory_guard = bpm_->FetchPageRead(directory_page_id);
   auto directory_page = directory_guard.As<ExtendibleHTableDirectoryPage>();
 
+  // header_page不再使用，释放
+  header_page = nullptr;
+  header_guard.Drop();
+
   // get the bucket page
   auto bucket_idx = directory_page->HashToBucketIndex(hash);
   auto bucket_page_id = directory_page->GetBucketPageId(bucket_idx);
-  directory_guard.Drop();
-  directory_page = nullptr;
   if (bucket_page_id == INVALID_PAGE_ID) {
     return false;
   }
   ReadPageGuard bucket_guard = bpm_->FetchPageRead(bucket_page_id);
   auto bucket_page = bucket_guard.As<ExtendibleHTableBucketPage<K, V, KC>>();
+
+  directory_guard.Drop();
+  directory_page = nullptr;
 
   // search the bucket
   V res;
@@ -212,8 +217,9 @@ auto DiskExtendibleHashTable<K, V, KC>::SplitBucket(ExtendibleHTableDirectoryPag
   }
 
   auto new_local_depth = local_depth + 1;
+  auto global_depth = directory->GetGlobalDepth();
   // update local depth and bucket page id
-  for (uint32_t i = 0; i < (1 << (directory_max_depth_ - new_local_depth)); ++i) {
+  for (uint32_t i = 0; i < (1 << (global_depth - new_local_depth)); ++i) {
     directory->SetLocalDepth(bucket_idx + (i << new_local_depth), new_local_depth);
     directory->SetLocalDepth(new_bucket_idx + (i << new_local_depth), new_local_depth);
     directory->SetBucketPageId(bucket_idx + (i << new_local_depth), old_bucket_page_id);
@@ -314,7 +320,9 @@ auto DiskExtendibleHashTable<K, V, KC>::MergeBucket(ExtendibleHTableDirectoryPag
   auto idx = bucket_idx & ((1 << new_local_depth) - 1);
   auto split_bucket_idx = bucket_idx ^ (1 << new_local_depth);
 
-  for (uint32_t i = 0; i < (1 << (directory_max_depth_ - new_local_depth)); ++i) {
+  auto global_depth = directory->GetGlobalDepth();
+
+  for (uint32_t i = 0; i < (1 << (global_depth - new_local_depth)); ++i) {
     if (directory->GetLocalDepth(idx + (i << new_local_depth)) != local_depth) {
       return false;
     }
@@ -332,7 +340,7 @@ auto DiskExtendibleHashTable<K, V, KC>::MergeBucket(ExtendibleHTableDirectoryPag
 
   if (bucket_page->IsEmpty()) {
     // merge the bucket
-    for (uint32_t i = 0; i < (1 << (directory_max_depth_ - new_local_depth)); ++i) {
+    for (uint32_t i = 0; i < (1 << (global_depth - new_local_depth)); ++i) {
       directory->SetLocalDepth(idx + (i << new_local_depth), new_local_depth);
       directory->SetBucketPageId(idx + (i << new_local_depth), split_bucket_page_id);
     }
@@ -340,7 +348,7 @@ auto DiskExtendibleHashTable<K, V, KC>::MergeBucket(ExtendibleHTableDirectoryPag
   }
   if (split_bucket_page->IsEmpty()) {
     // merge the split bucket
-    for (uint32_t i = 0; i < (1 << (directory_max_depth_ - new_local_depth)); ++i) {
+    for (uint32_t i = 0; i < (1 << (global_depth - new_local_depth)); ++i) {
       directory->SetLocalDepth(idx + (i << new_local_depth), new_local_depth);
       directory->SetBucketPageId(idx + (i << new_local_depth), bucket_page_id);
     }
