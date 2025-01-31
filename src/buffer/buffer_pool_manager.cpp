@@ -161,7 +161,6 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
   frame_id_t frame_id = page_table_[page_id];
   // 加锁
   std::lock_guard<std::mutex> page_mutex(page_mutexes_[frame_id]);
-  latch_lock.unlock();
   // 更新page的dirty标志
   pages_[frame_id].is_dirty_ = pages_[frame_id].is_dirty_ || is_dirty;
 
