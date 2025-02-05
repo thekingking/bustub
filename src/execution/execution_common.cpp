@@ -114,8 +114,8 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *cat
     index_info->index_->ScanKey(key, &rids, txn);
     // 索引已经存在
     if (!rids.empty()) {
-      auto page_guard = table_info->table_->AcquireTablePageWriteLock(rids[0]);
-      auto page = page_guard.AsMut<TablePage>();
+      auto page_guard = table_info->table_->AcquireTablePageReadLock(rids[0]);
+      auto page = page_guard.As<TablePage>();
       auto tuple_meta = table_info->table_->GetTupleMetaWithLockAcquired(rids[0], page);
       // 索引对应的tuple已经删除或者删除了但是是另一个事务在操作（写写冲突）
       if (!tuple_meta.is_deleted_ ||

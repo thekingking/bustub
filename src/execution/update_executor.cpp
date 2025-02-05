@@ -106,8 +106,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
 
     auto page_guard = table_info_->table_->AcquireTablePageWriteLock(old_rid);
     auto page = page_guard.AsMut<TablePage>();
-    // 循环并发冲突检查
-    // con_check:
+
     auto [tuple_meta, cur_tuple] = table_info_->table_->GetTupleWithLockAcquired(old_rid, page);
     std::optional<VersionUndoLink> version_link = txn_manager->GetVersionLink(old_rid);
     UndoLink undo_link = version_link->prev_;
@@ -132,27 +131,27 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       // 当前事务第一次执行write操作
 
       // 生成UndoLog中数据
-      std::vector<bool> modified_fields;
-      std::vector<Value> modified_values;
+      std::vector<bool> new_modified_fields;
+      std::vector<Value> new_modified_values;
       std::vector<uint32_t> cols;
-      modified_fields.reserve(schema.GetColumnCount());
+      new_modified_fields.reserve(schema.GetColumnCount());
       // 生成撤销日志中需要的数据
       for (uint32_t i = 0; i < schema.GetColumnCount(); ++i) {
         auto old_value = cur_tuple.GetValue(&schema, i);
         if (old_value.CompareEquals(new_values[i]) == CmpBool::CmpTrue) {
-          modified_fields.emplace_back(false);
+          new_modified_fields.emplace_back(false);
         } else {
-          modified_fields.emplace_back(true);
+          new_modified_fields.emplace_back(true);
           cols.push_back(i);
-          modified_values.push_back(old_value);
+          new_modified_values.push_back(old_value);
         }
       }
-      auto modified_tuple_schema = Schema::CopySchema(&schema, cols);
-      auto modified_tuple = Tuple{modified_values, &modified_tuple_schema};
+      auto new_schema = Schema::CopySchema(&schema, cols);
+      auto new_modified_tuple = Tuple{new_modified_values, &new_schema};
 
       // 更新version_link状态
       undo_link = txn->AppendUndoLog(
-          UndoLog{tuple_meta.is_deleted_, modified_fields, modified_tuple, tuple_meta.ts_, undo_link});
+          UndoLog{tuple_meta.is_deleted_, new_modified_fields, new_modified_tuple, tuple_meta.ts_, undo_link});
       version_link = VersionUndoLink{undo_link, true};
       txn_manager->UpdateVersionLink(old_rid, version_link);
 

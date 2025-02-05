@@ -23,14 +23,13 @@ namespace bustub {
 IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanPlanNode *plan)
     : AbstractExecutor(exec_ctx) {
   plan_ = plan;
-}
-
-void IndexScanExecutor::Init() {
   auto txn = exec_ctx_->GetTransaction();
   if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
     txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
   }
 }
+
+void IndexScanExecutor::Init() {}
 
 auto IndexScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   if (has_scanned_) {
