@@ -14,12 +14,13 @@ namespace bustub {
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple>;
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, RID &rid) -> void;
-
-auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid, RID &rid)
     -> void;
 
-void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
+auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid,
+                 Tuple &tuple) -> void;
+
+void TxnMgrDbg(const std::string &info, TransactionManager *txn_manager, const TableInfo *table_info,
                TableHeap *table_heap);
 
 // Add new functions as needed... You are likely need to define some more functions.

@@ -153,10 +153,6 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
       auto page = page_guard.AsMut<TablePage>();
       TupleMeta tuple_meta = table_heap->GetTupleMetaWithLockAcquired(rid, page);
       page->UpdateTupleMeta({commit_ts, tuple_meta.is_deleted_}, rid);
-      // 更新version_link状态，释放in_progress_锁
-      std::optional<VersionUndoLink> version_link = GetVersionLink(rid);
-      version_link->in_progress_ = false;
-      UpdateVersionLink(rid, version_link);
     }
   }
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
@@ -200,14 +196,9 @@ void TransactionManager::Abort(Transaction *txn) {
         } else {
           page->UpdateTupleMeta({undo_log->ts_, true}, rid);
         }
-        // 更新version_link状态，释放in_progress_锁
-        version_link = VersionUndoLink{undo_log->prev_version_, false};
       } else {
         page->UpdateTupleMeta({0, true}, rid);
-        version_link->in_progress_ = false;
       }
-      // 更新version_link状态，释放in_progress_锁
-      UpdateVersionLink(rid, version_link);
     }
   }
 

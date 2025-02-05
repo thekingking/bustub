@@ -63,48 +63,20 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
   return res;
 }
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, RID &rid) -> void {
-  auto table_info = catalog->GetTable(oid);
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid, RID &rid)
+    -> void {
+  auto table_info = catalog->GetTable(table_oid);
   auto schema = table_info->schema_;
 
   auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
   auto page = page_guard.AsMut<TablePage>();
-// 循环并发冲突检查
-con_check:
+  // 循环并发冲突检查
+  // con_check:
   auto [tuple_meta, tuple] = table_info->table_->GetTupleWithLockAcquired(rid, page);
+  std::optional<VersionUndoLink> version_link = txn_manager->GetVersionLink(rid);
+  UndoLink undo_link = version_link->prev_;
   // 判断是否有写写冲突
   if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
-    txn->SetTainted();
-    throw ExecutionException("write-write conflict");
-  }
-  std::optional<VersionUndoLink> version_link;
-  // 自旋检查version_link是否被其他事务占用
-  do {
-    version_link = txn_mgr->GetVersionLink(rid);
-  } while (version_link.has_value() && version_link->in_progress_ && tuple_meta.ts_ != txn->GetTransactionId());
-  // 更新version_link，获取in_progress_锁
-  UndoLink undo_link{};
-  if (version_link.has_value()) {
-    version_link->in_progress_ = true;
-    undo_link = version_link->prev_;
-  }
-  // 确保之前获取的版本仍是版本链中的最新版本
-  if (tuple_meta.ts_ != txn->GetTransactionId() &&
-      !txn_mgr->UpdateVersionLink(rid, version_link, [&](std::optional<VersionUndoLink> link) {
-        return (!link.has_value() && !version_link.has_value()) ||
-               (link.has_value() && version_link.has_value() && !link->in_progress_ &&
-                link->prev_ == version_link->prev_);
-      })) {
-    // 有其他事务在操作，重新执行
-    goto con_check;
-  }
-  // 判断是否有写写冲突
-  if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
-    // 释放in_progress_锁
-    if (version_link.has_value()) {
-      version_link->in_progress_ = false;
-      txn_mgr->UpdateVersionLink(rid, version_link);
-    }
     txn->SetTainted();
     throw ExecutionException("write-write conflict");
   }
@@ -113,26 +85,26 @@ con_check:
     // 更新version_link状态
     std::vector<bool> modified_fields = std::vector<bool>(schema.GetColumnCount(), true);
     undo_link = txn->AppendUndoLog(UndoLog{false, modified_fields, tuple, tuple_meta.ts_, undo_link});
-    txn_mgr->UpdateVersionLink(rid, VersionUndoLink{undo_link, true});
+    txn_manager->UpdateVersionLink(rid, VersionUndoLink{undo_link, true});
 
     txn->AppendWriteSet(table_info->oid_, rid);
   } else {
     // 最开始执行的不是插入操作
-    auto old_undo_log = txn_mgr->GetUndoLogOptional(undo_link);
-    if (old_undo_log.has_value() && !old_undo_log->is_deleted_) {
-      auto base_tuple = ReconstructTuple(&schema, tuple, tuple_meta, {*old_undo_log});
+    auto undo_log = txn_manager->GetUndoLogOptional(undo_link);
+    if (undo_log.has_value() && !undo_log->is_deleted_) {
+      auto old_tuple = ReconstructTuple(&schema, tuple, tuple_meta, {*undo_log});
       txn->ModifyUndoLog(undo_link.prev_log_idx_,
-                         UndoLog{old_undo_log->is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
-                                 base_tuple.value_or(Tuple{}), old_undo_log->ts_, old_undo_log->prev_version_});
+                         UndoLog{undo_log->is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
+                                 old_tuple.value_or(Tuple{}), undo_log->ts_, undo_log->prev_version_});
     }
   }
   page->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
 }
 
-auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog, table_oid_t oid, Tuple &tuple)
-    -> void {
+auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid,
+                 Tuple &tuple) -> void {
   std::vector<RID> rids;
-  auto table_info = catalog->GetTable(oid);
+  auto table_info = catalog->GetTable(table_oid);
   auto indexes = catalog->GetTableIndexes(table_info->name_);
   auto schema = table_info->schema_;
 
@@ -162,7 +134,7 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
     }
     RID new_rid = new_rid_optional.value();
 
-    txn_mgr->UpdateVersionLink(new_rid, VersionUndoLink{}, nullptr);
+    txn_manager->UpdateVersionLink(new_rid, VersionUndoLink{}, nullptr);
     txn->AppendWriteSet(table_info->oid_, new_rid);
 
     // 在关联的索引中插入新的索引项
@@ -181,53 +153,23 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
     RID rid = rids[0];
     auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
     auto page = page_guard.AsMut<TablePage>();
-  // 循环并发冲突检查
-  con_check:
+    // 循环并发冲突检查
+    // con_check:
     auto tuple_meta = table_info->table_->GetTupleMetaWithLockAcquired(rid, page);
+    std::optional<VersionUndoLink> version_link = txn_manager->GetVersionLink(rid);
+    UndoLink undo_link = version_link->prev_;
     // 判断是否有写写冲突
     if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
       txn->SetTainted();
       throw ExecutionException("write-write conflict");
     }
-    std::optional<VersionUndoLink> version_link;
-    // 自旋检查version_link是否被其他事务占用
-    do {
-      version_link = txn_mgr->GetVersionLink(rid);
-    } while (version_link.has_value() && version_link->in_progress_ && tuple_meta.ts_ != txn->GetTransactionId());
-    // 更新version_link，获取in_progress_锁
-    UndoLink undo_link{};
-    if (version_link.has_value()) {
-      version_link->in_progress_ = true;
-      undo_link = version_link->prev_;
-    }
-    // 确保之前获取的版本仍是版本链中的最新版本
-    if (tuple_meta.ts_ != txn->GetTransactionId() &&
-        !txn_mgr->UpdateVersionLink(rid, version_link, [&](std::optional<VersionUndoLink> link) {
-          return (!link.has_value() && !version_link.has_value()) ||
-                 (link.has_value() && version_link.has_value() && !link->in_progress_ &&
-                  link->prev_ == version_link->prev_);
-        })) {
-      // 有其他事务在操作，重新执行
-      goto con_check;
-    }
-    // 判断是否有写写冲突
-    if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
-      // 释放in_progress_锁
-      if (version_link.has_value()) {
-        version_link->in_progress_ = false;
-        txn_mgr->UpdateVersionLink(rid, version_link, nullptr);
-      }
-      txn->SetTainted();
-      throw ExecutionException("write-write conflict");
-    }
-
     // 判断是否是当前事务已在操作的tuple
     if (tuple_meta.ts_ != txn->GetTransactionId()) {
       // 原先tuple被删除，且已经提交
       // 更新version_link状态
       undo_link = txn->AppendUndoLog(UndoLog{
           tuple_meta.is_deleted_, std::vector<bool>(schema.GetColumnCount(), false), {}, tuple_meta.ts_, undo_link});
-      txn_mgr->UpdateVersionLink(rid, VersionUndoLink{undo_link, true});
+      txn_manager->UpdateVersionLink(rid, VersionUndoLink{undo_link, true});
       txn->AppendWriteSet(table_info->oid_, rid);
     }
     // 如果tuple已经被删除，直接更新tuple的元数据，因为删除时已经更新过undo_log
@@ -235,11 +177,11 @@ auto InsertTuple(Transaction *txn, TransactionManager *txn_mgr, Catalog *catalog
   }
 }
 
-void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
+void TxnMgrDbg(const std::string &info, TransactionManager *txn_manager, const TableInfo *table_info,
                TableHeap *table_heap) {
   // always use stderr for printing logs...
   fmt::println(stderr, "debug_hook: {}", info);
-  for (auto &txn : txn_mgr->txn_map_) {
+  for (auto &txn : txn_manager->txn_map_) {
     fmt::println(stderr, "txn_id: {}, state: {}, read_ts: {}, commit_ts: {}", txn.first,
                  txn.second->GetTransactionState(), txn.second->GetReadTs(), txn.second->GetCommitTs());
   }
@@ -248,7 +190,7 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
     auto rid = iter.GetRID();
     auto tuple = iter.GetTuple().second;
     auto tuple_meta = iter.GetTuple().first;
-    auto pre_link = txn_mgr->GetUndoLink(rid);
+    auto pre_link = txn_manager->GetUndoLink(rid);
     fmt::println(stderr, "tuple={}, tuple_meta={},{}", tuple.ToString(&table_info->schema_), tuple_meta.ts_,
                  tuple_meta.is_deleted_ ? "deleted" : "not deleted");
     if (!pre_link.has_value()) {
@@ -256,13 +198,13 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
     }
     UndoLink undo_link = pre_link.value();
     while (undo_link.IsValid()) {
-      auto undo_log = txn_mgr->GetUndoLogOptional(undo_link);
+      auto undo_log = txn_manager->GetUndoLogOptional(undo_link);
       if (!undo_log.has_value()) {
         break;
       }
-      auto new_tuple = ReconstructTuple(&table_info->schema_, tuple, tuple_meta, {*undo_log});
-      if (new_tuple.has_value()) {
-        tuple = new_tuple.value();
+      auto old_tuple = ReconstructTuple(&table_info->schema_, tuple, tuple_meta, {*undo_log});
+      if (old_tuple.has_value()) {
+        tuple = old_tuple.value();
         tuple_meta = TupleMeta{undo_log->ts_, undo_log->is_deleted_};
         fmt::println(stderr, " => tuple={}, tuple_meta={},{}", tuple.ToString(&table_info->schema_), tuple_meta.ts_,
                      tuple_meta.is_deleted_ ? "deleted" : "not deleted");
