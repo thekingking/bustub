@@ -30,7 +30,6 @@ UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *
     : AbstractExecutor(exec_ctx) {
   // As of Fall 2022, you DON'T need to implement update executor to have perfect score in project 3 / project 4.
   plan_ = plan;
-  table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid());
   child_executor_ = std::move(child_executor);
 }
 
@@ -44,12 +43,13 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   has_updated_ = true;
   // 初始化
   int count = 0;
-  auto catalog = exec_ctx_->GetCatalog();
-  auto schema = table_info_->schema_;
-  auto indexes = catalog->GetTableIndexes(table_info_->name_);
   auto txn = exec_ctx_->GetTransaction();
   auto txn_manager = exec_ctx_->GetTransactionManager();
-  auto table_oid = plan_->GetTableOid();
+  auto catalog = exec_ctx_->GetCatalog();
+  auto table_info = catalog->GetTable(plan_->GetTableOid());
+  auto indexes = catalog->GetTableIndexes(table_info->name_);
+  auto schema = table_info->schema_;
+
   std::vector<Tuple> new_tuples;
   std::vector<Tuple> old_tuples;
   std::vector<RID> rids;
@@ -92,10 +92,10 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   // 有索引更新
   if (has_index_update) {
     for (int i = 0; i < count; ++i) {
-      DeleteTuple(txn, txn_manager, catalog, table_oid, rids[i]);
+      DeleteTuple(txn, txn_manager, table_info, rids[i]);
     }
     for (auto &new_tuple : new_tuples) {
-      InsertTuple(txn, txn_manager, catalog, table_oid, new_tuple);
+      InsertTuple(txn, txn_manager, table_info, indexes, new_tuple);
     }
     return true;
   }
@@ -104,10 +104,10 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   for (int i = 0; i < count; ++i) {
     RID old_rid = rids[i];
 
-    auto page_guard = table_info_->table_->AcquireTablePageWriteLock(old_rid);
+    auto page_guard = table_info->table_->AcquireTablePageWriteLock(old_rid);
     auto page = page_guard.AsMut<TablePage>();
 
-    auto [tuple_meta, cur_tuple] = table_info_->table_->GetTupleWithLockAcquired(old_rid, page);
+    auto [tuple_meta, cur_tuple] = table_info->table_->GetTupleWithLockAcquired(old_rid, page);
     std::optional<VersionUndoLink> version_link = txn_manager->GetVersionLink(old_rid);
     UndoLink undo_link = version_link->prev_;
 
@@ -194,7 +194,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     }
 
     // 更新tuple
-    table_info_->table_->UpdateTupleInPlaceWithLockAcquired({txn->GetTransactionTempTs(), tuple_meta.is_deleted_},
+    table_info->table_->UpdateTupleInPlaceWithLockAcquired({txn->GetTransactionTempTs(), tuple_meta.is_deleted_},
                                                             new_tuple, old_rid, page);
   }
 

@@ -48,11 +48,10 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   int count = 0;
   auto txn = exec_ctx_->GetTransaction();
   auto txn_mgr = exec_ctx_->GetTransactionManager();
-  auto catalog = exec_ctx_->GetCatalog();
-  auto table_oid = plan_->GetTableOid();
+  auto table_info = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid());
 
   while (child_executor_->Next(tuple, rid)) {
-    DeleteTuple(txn, txn_mgr, catalog, table_oid, *rid);
+    DeleteTuple(txn, txn_mgr, table_info, *rid);
     ++count;
   }
   // Return the number of deleted tuples

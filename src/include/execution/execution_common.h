@@ -14,11 +14,10 @@ namespace bustub {
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple>;
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid, RID &rid)
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, RID &rid)
     -> void;
 
-auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid,
-                 Tuple &tuple) -> void;
+auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, std::vector<IndexInfo*> &indexes, Tuple &tuple) -> void;
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_manager, const TableInfo *table_info,
                TableHeap *table_heap);

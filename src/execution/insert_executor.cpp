@@ -50,11 +50,12 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   auto txn = exec_ctx_->GetTransaction();
   auto txn_mgr = exec_ctx_->GetTransactionManager();
   auto catalog = exec_ctx_->GetCatalog();
-  auto table_oid = plan_->GetTableOid();
+  auto table_info = catalog->GetTable(plan_->GetTableOid());
+  auto indexes = catalog->GetTableIndexes(table_info->name_);
 
   // 从child_executor中获取待插入的tuple
   while (child_executor_->Next(tuple, rid)) {
-    InsertTuple(txn, txn_mgr, catalog, table_oid, *tuple);
+    InsertTuple(txn, txn_mgr, table_info, indexes, *tuple);
     ++count;
   }
   std::vector<Value> result{{TypeId::INTEGER, count}};

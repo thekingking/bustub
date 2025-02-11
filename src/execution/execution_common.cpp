@@ -63,11 +63,11 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
   return res;
 }
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid, RID &rid)
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, RID &rid)
     -> void {
-  auto table_info = catalog->GetTable(table_oid);
   auto schema = table_info->schema_;
 
+  // 获取tuple的元数据
   auto page_guard = table_info->table_->AcquireTablePageWriteLock(rid);
   auto page = page_guard.AsMut<TablePage>();
   // 循环并发冲突检查
@@ -75,12 +75,7 @@ auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *cat
   auto [tuple_meta, tuple] = table_info->table_->GetTupleWithLockAcquired(rid, page);
   std::optional<VersionUndoLink> version_link = txn_manager->GetVersionLink(rid);
   UndoLink undo_link = version_link->prev_;
-  // 判断是否有写写冲突
-  if (tuple_meta.ts_ > txn->GetReadTs() && tuple_meta.ts_ != txn->GetTransactionId()) {
-    txn->SetTainted();
-    throw ExecutionException("write-write conflict");
-  }
-  // 判断是否是当前事务已在操作的tuple
+  // 根据tuple_ts和txn_ts大小关系判断情况
   if (tuple_meta.ts_ <= txn->GetReadTs()) {
     // 更新version_link状态
     std::vector<bool> modified_fields = std::vector<bool>(schema.GetColumnCount(), true);
@@ -88,7 +83,7 @@ auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *cat
     txn_manager->UpdateVersionLink(rid, VersionUndoLink{undo_link, true});
 
     txn->AppendWriteSet(table_info->oid_, rid);
-  } else {
+  } else if (tuple_meta.ts_ == txn->GetTransactionId()) {
     // 最开始执行的不是插入操作
     auto undo_log = txn_manager->GetUndoLogOptional(undo_link);
     if (undo_log.has_value() && !undo_log->is_deleted_) {
@@ -97,15 +92,17 @@ auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *cat
                          UndoLog{undo_log->is_deleted_, std::vector<bool>(schema.GetColumnCount(), true),
                                  old_tuple.value_or(Tuple{}), undo_log->ts_, undo_log->prev_version_});
     }
+  } else {
+    // 写写冲突
+    txn->SetTainted();
+    throw ExecutionException("write-write conflict");
   }
   page->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
 }
 
-auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, Catalog *catalog, table_oid_t table_oid,
+auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, std::vector<IndexInfo*> &indexes,
                  Tuple &tuple) -> void {
   std::vector<RID> rids;
-  auto table_info = catalog->GetTable(table_oid);
-  auto indexes = catalog->GetTableIndexes(table_info->name_);
   auto schema = table_info->schema_;
 
   // 判断是否存在索引冲突
