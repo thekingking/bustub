@@ -27,18 +27,13 @@ namespace bustub {
 enum class AccessType { Unknown = 0, Lookup, Scan, Index };
 
 class LRUKNode {
- public:
+ friend class LRUKReplacer;
+ private:
   /** History of last seen K timestamps of this page. Least recent timestamp stored in front. */
   // Remove maybe_unused if you start using them. Feel free to change the member variables as you want.
 
   std::list<size_t> history_;  // 访问历史
-  size_t k_;                   // k值
-  frame_id_t fid_;             // 帧id
   bool is_evictable_{false};   // 是否可被替换
-
- public:
-  LRUKNode() = default;
-  LRUKNode(frame_id_t fid, size_t k) : k_(k), fid_(fid) {}
 };
 
 /**
