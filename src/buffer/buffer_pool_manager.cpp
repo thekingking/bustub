@@ -103,7 +103,7 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
     ++pages_[frame_id].pin_count_;
     return &pages_[frame_id];
   }
-  
+
   // 如果free_list为空，则从replacer中evict一个frame
   frame_id_t frame_id = -1;
   if (free_list_.empty()) {
@@ -144,7 +144,7 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   auto read_future = read_promise.get_future();
   disk_scheduler_->Schedule({false, pages_[frame_id].GetData(), page_id, std::move(read_promise)});
   read_future.get();
-  
+
   return &pages_[frame_id];
 }
 

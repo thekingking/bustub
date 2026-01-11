@@ -63,8 +63,7 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
   return res;
 }
 
-auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, RID &rid)
-    -> void {
+auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo *table_info, RID &rid) -> void {
   auto schema = table_info->schema_;
 
   // 获取tuple的元数据
@@ -100,8 +99,8 @@ auto DeleteTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* t
   page->UpdateTupleMeta({txn->GetTransactionTempTs(), true}, rid);
 }
 
-auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo* table_info, std::vector<IndexInfo*> &indexes,
-                 Tuple &tuple) -> void {
+auto InsertTuple(Transaction *txn, TransactionManager *txn_manager, TableInfo *table_info,
+                 std::vector<IndexInfo *> &indexes, Tuple &tuple) -> void {
   std::vector<RID> rids;
   auto schema = table_info->schema_;
 

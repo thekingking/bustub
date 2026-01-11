@@ -195,7 +195,7 @@ auto UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
 
     // 更新tuple
     table_info->table_->UpdateTupleInPlaceWithLockAcquired({txn->GetTransactionTempTs(), tuple_meta.is_deleted_},
-                                                            new_tuple, old_rid, page);
+                                                           new_tuple, old_rid, page);
   }
 
   return true;
